@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Settings, Send, Download, Monitor, Tablet, Smartphone, Code2, Loader2, Copy, Check, Rocket, AlertCircle, Image as ImageIcon, Video, RefreshCw, Trash2 } from 'lucide-react';
+import { Settings, Send, Download, Monitor, Tablet, Smartphone, Code2, Loader2, Copy, Check, Rocket, AlertCircle, Image as ImageIcon, Video, RefreshCw, Trash2, Plus, History, X, FileCode } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Prism from 'prismjs';
@@ -65,6 +65,30 @@ const loadMessages = () => {
   }
 };
 
+// Load projects history from localStorage
+const loadProjects = () => {
+  try {
+    const stored = localStorage.getItem('ai_builder_projects');
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+};
+
+// Load current project ID
+const loadCurrentProjectId = () => {
+  return localStorage.getItem('ai_builder_current_project') || null;
+};
+
+// Auto-detect project name from first message
+const generateProjectName = (messages) => {
+  if (!messages || messages.length === 0) return 'Yeni Proje';
+  const firstMsg = messages.find(m => m.role === 'user');
+  if (!firstMsg) return 'Yeni Proje';
+  const content = firstMsg.content.split('\n')[0].substring(0, 50);
+  return content || 'Yeni Proje';
+};
+
 const Builder = () => {
   const [messages, setMessages] = useState(loadMessages);
   const [input, setInput] = useState('');
@@ -80,6 +104,9 @@ const Builder = () => {
   const [previewKey, setPreviewKey] = useState(0);
   const [uploadedMedia, setUploadedMedia] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [projects, setProjects] = useState(loadProjects);
+  const [currentProjectId, setCurrentProjectId] = useState(loadCurrentProjectId);
+  const [showProjectHistory, setShowProjectHistory] = useState(false);
   const chatEndRef = useRef(null);
   const abortControllerRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -100,6 +127,85 @@ const Builder = () => {
   useEffect(() => {
     localStorage.setItem('ai_builder_messages', JSON.stringify(messages));
   }, [messages]);
+
+  // Auto-save current project to projects history
+  useEffect(() => {
+    const hasContent = messages.length > 0 || generatedCode.html || generatedCode.css || generatedCode.js;
+    if (!hasContent) return;
+
+    const projectId = currentProjectId || `project-${Date.now()}`;
+    if (!currentProjectId) {
+      setCurrentProjectId(projectId);
+      localStorage.setItem('ai_builder_current_project', projectId);
+    }
+
+    const updatedProject = {
+      id: projectId,
+      name: generateProjectName(messages),
+      messages,
+      code: generatedCode,
+      updatedAt: new Date().toISOString(),
+      createdAt: projects.find(p => p.id === projectId)?.createdAt || new Date().toISOString()
+    };
+
+    setProjects(prev => {
+      const existing = prev.findIndex(p => p.id === projectId);
+      let updated;
+      if (existing >= 0) {
+        updated = [...prev];
+        updated[existing] = updatedProject;
+      } else {
+        updated = [updatedProject, ...prev];
+      }
+      // Keep max 20 projects
+      updated = updated.slice(0, 20);
+      localStorage.setItem('ai_builder_projects', JSON.stringify(updated));
+      return updated;
+    });
+  }, [messages, generatedCode]);
+
+  // Load a project from history
+  const loadProject = (project) => {
+    setMessages(project.messages || []);
+    setGeneratedCode(project.code || { html: '', css: '', js: '' });
+    setCurrentProjectId(project.id);
+    localStorage.setItem('ai_builder_current_project', project.id);
+    setShowProjectHistory(false);
+    setActiveTab('preview');
+    setPreviewKey(k => k + 1);
+  };
+
+  // Delete a project from history
+  const deleteProject = (projectId, e) => {
+    e.stopPropagation();
+    if (!window.confirm('Bu projeyi silmek istediğinizden emin misiniz?')) return;
+    setProjects(prev => {
+      const updated = prev.filter(p => p.id !== projectId);
+      localStorage.setItem('ai_builder_projects', JSON.stringify(updated));
+      return updated;
+    });
+    if (currentProjectId === projectId) {
+      setMessages([]);
+      setGeneratedCode({ html: '', css: '', js: '' });
+      setCurrentProjectId(null);
+      localStorage.removeItem('ai_builder_current_project');
+    }
+  };
+
+  // Create new project
+  const newProject = () => {
+    if (messages.length > 0 || generatedCode.html) {
+      if (!window.confirm('Mevcut projeyi bırakıp yeni proje başlatmak istediğinizden emin misiniz? (Mevcut proje kaydedildi)')) return;
+    }
+    setMessages([]);
+    setGeneratedCode({ html: '', css: '', js: '' });
+    setCurrentProjectId(null);
+    localStorage.removeItem('ai_builder_current_project');
+    localStorage.removeItem('ai_builder_messages');
+    localStorage.removeItem('ai_builder_code');
+    setShowProjectHistory(false);
+    setActiveTab('preview');
+  };
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -168,10 +274,15 @@ const Builder = () => {
     setValidationStatus(null);
     setPublishStatus(null);
 
-    // Provide context about existing code
+    // Provide context about existing code (in user's language automatically)
+    const hasCode = generatedCode.html || generatedCode.css || generatedCode.js;
+    const contextInfo = hasCode 
+      ? `\n\n[CONTEXT: User has existing code (HTML: ${generatedCode.html.length} chars, CSS: ${generatedCode.css.length} chars, JS: ${generatedCode.js.length} chars). Update/modify it based on this request. Respond in the same language as the user's message. Provide code in separate \`\`\`html, \`\`\`css, \`\`\`javascript blocks.]`
+      : `\n\n[CONTEXT: Fresh start. Create complete, error-free code. Respond in the same language as the user's message. Provide code in separate \`\`\`html, \`\`\`css, \`\`\`javascript blocks.]`;
+    
     const contextMessage = {
       role: 'user',
-      content: `${input}\n\n---\nMevcut kod / Current code (varsa güncelle / update if exists):\n\nHTML var mı: ${generatedCode.html ? 'Evet (' + generatedCode.html.length + ' karakter)' : 'Yok'}\nCSS var mı: ${generatedCode.css ? 'Evet' : 'Yok'}\nJS var mı: ${generatedCode.js ? 'Evet' : 'Yok'}\n\nÖnemli: HTML, CSS ve JavaScript kodlarını ayrı ayrı \`\`\`html, \`\`\`css ve \`\`\`javascript bloklarında ver. Kod dışında kısa bir açıklama yaz. Kodun eksiksiz ve hatasız olduğundan emin ol.`
+      content: input + contextInfo
     };
 
     const messagesToSend = [...messages, contextMessage];
@@ -354,27 +465,56 @@ const Builder = () => {
     }
   };
 
-  // Generate preview HTML
+  // Generate preview HTML - supports external libraries
   const getPreviewHTML = () => {
+    // Extract any <script src> or <link href> from HTML for placement in <head>
+    const html = generatedCode.html || '';
+    const scriptTags = [...html.matchAll(/<script\s+src=["'][^"']+["'][^>]*><\/script>/g)].map(m => m[0]).join('\n');
+    const linkTags = [...html.matchAll(/<link\s+[^>]*href=["'][^"']+["'][^>]*>/g)].map(m => m[0]).join('\n');
+    
+    // Remove those tags from body content
+    let bodyContent = html
+      .replace(/<script\s+src=["'][^"']+["'][^>]*><\/script>/g, '')
+      .replace(/<link\s+[^>]*href=["'][^"']+["'][^>]*>/g, '');
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Preview</title>
+${linkTags}
+${scriptTags}
 <style>
+* { box-sizing: border-box; }
+body { margin: 0; }
 ${generatedCode.css}
 </style>
 </head>
 <body>
-${generatedCode.html}
+${bodyContent}
 <script>
-try {
+// Global error handler
+window.addEventListener('error', function(e) {
+  const errDiv = document.createElement('div');
+  errDiv.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#dc2626;color:white;padding:10px 14px;border-radius:6px;font-family:monospace;font-size:12px;max-width:400px;z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+  errDiv.innerHTML = '<strong>JS Error:</strong> ' + e.message + '<br><small style="opacity:0.7;">Line ' + e.lineno + '</small>';
+  document.body.appendChild(errDiv);
+  setTimeout(() => errDiv.remove(), 8000);
+});
+
+// Wait for external libraries to load before running user code
+window.addEventListener('load', function() {
+  try {
 ${generatedCode.js}
-} catch(e) {
-  console.error('Preview error:', e);
-  document.body.innerHTML += '<div style="position:fixed;bottom:10px;right:10px;background:#dc2626;color:white;padding:10px;border-radius:6px;font-family:monospace;font-size:12px;max-width:400px;z-index:9999;">JS Error: ' + e.message + '</div>';
-}
+  } catch(e) {
+    console.error('Preview error:', e);
+    const errDiv = document.createElement('div');
+    errDiv.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#dc2626;color:white;padding:10px 14px;border-radius:6px;font-family:monospace;font-size:12px;max-width:400px;z-index:99999;';
+    errDiv.innerHTML = '<strong>JS Error:</strong> ' + e.message;
+    document.body.appendChild(errDiv);
+  }
+});
 </script>
 </body>
 </html>`;
@@ -590,6 +730,17 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
               ))}
             </SelectContent>
           </Select>
+
+          <Button
+            data-testid="new-project-btn"
+            variant="outline"
+            size="sm"
+            onClick={newProject}
+            className="h-9 bg-zinc-900 border-zinc-700 hover:bg-zinc-800"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            Yeni
+          </Button>
 
           <Button
             data-testid="publish-btn"
@@ -1031,6 +1182,56 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
           </div>
         </div>
       </div>
+
+      {/* Project History Bar - Bottom */}
+      {projects.length > 0 && (
+        <div className="border-t border-zinc-800 bg-zinc-950 shrink-0">
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800/50">
+            <History className="w-4 h-4 text-zinc-500" />
+            <span className="text-xs uppercase tracking-wider text-zinc-500 font-medium">
+              Son Projeler / Recent Projects ({projects.length})
+            </span>
+            <button
+              data-testid="toggle-projects-btn"
+              onClick={() => setShowProjectHistory(!showProjectHistory)}
+              className="ml-auto text-xs text-zinc-500 hover:text-zinc-300"
+            >
+              {showProjectHistory ? 'Gizle' : 'Tümünü Göster'}
+            </button>
+          </div>
+          <div className={`flex gap-2 px-4 py-3 overflow-x-auto ${showProjectHistory ? 'flex-wrap' : ''}`}>
+            {(showProjectHistory ? projects : projects.slice(0, 8)).map((project) => (
+              <button
+                key={project.id}
+                data-testid={`project-item-${project.id}`}
+                onClick={() => loadProject(project)}
+                className={`group flex items-center gap-2 px-3 py-2 rounded-md border text-xs whitespace-nowrap transition-all shrink-0 ${
+                  currentProjectId === project.id
+                    ? 'bg-blue-600/20 border-blue-500/50 text-blue-300'
+                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-800 hover:border-zinc-700 hover:text-zinc-200'
+                }`}
+              >
+                <FileCode className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate max-w-[180px]" title={project.name}>
+                  {project.name}
+                </span>
+                <span className="text-[10px] opacity-60">
+                  {new Date(project.updatedAt).toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' })}
+                </span>
+                <span
+                  onClick={(e) => deleteProject(project.id, e)}
+                  data-testid={`delete-project-${project.id}`}
+                  className="ml-1 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 transition-all cursor-pointer"
+                  role="button"
+                  tabIndex={0}
+                >
+                  <X className="w-3 h-3" />
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
