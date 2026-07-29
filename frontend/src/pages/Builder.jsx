@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Settings, Send, Download, Monitor, Tablet, Smartphone, Code2, Loader2, Copy, Check } from 'lucide-react';
+import { Settings, Send, Download, Monitor, Tablet, Smartphone, Code2, Loader2, Copy, Check, Rocket, AlertCircle, Image as ImageIcon, Video, RefreshCw, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Prism from 'prismjs';
@@ -31,6 +31,7 @@ const MODELS = {
     { value: 'gpt-5.4', label: 'GPT-5.4' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
     { value: 'gpt-5.2', label: 'GPT-5.2' },
+    { value: 'gpt-4o', label: 'GPT-4o' },
   ],
   anthropic: [
     { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
@@ -44,8 +45,28 @@ const MODELS = {
   ],
 };
 
+// Load code from localStorage
+const loadCode = () => {
+  try {
+    const stored = localStorage.getItem('ai_builder_code');
+    return stored ? JSON.parse(stored) : { html: '', css: '', js: '' };
+  } catch {
+    return { html: '', css: '', js: '' };
+  }
+};
+
+// Load messages from localStorage
+const loadMessages = () => {
+  try {
+    const stored = localStorage.getItem('ai_builder_messages');
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+};
+
 const Builder = () => {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(loadMessages);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [provider, setProvider] = useState('openai');
@@ -53,53 +74,86 @@ const Builder = () => {
   const [deviceMode, setDeviceMode] = useState('desktop');
   const [activeTab, setActiveTab] = useState('preview');
   const [copiedCode, setCopiedCode] = useState(null);
+  const [validationStatus, setValidationStatus] = useState(null);
+  const [publishStatus, setPublishStatus] = useState(null);
+  const [publishedUrl, setPublishedUrl] = useState(null);
+  const [previewKey, setPreviewKey] = useState(0);
+  const [uploadedMedia, setUploadedMedia] = useState([]);
+  const [isUploading, setIsUploading] = useState(false);
   const chatEndRef = useRef(null);
-  
-  // API Keys from localStorage
+  const abortControllerRef = useRef(null);
+  const imageInputRef = useRef(null);
+  const videoInputRef = useRef(null);
+
   const [apiKeys, setApiKeys] = useState(() => {
     const stored = localStorage.getItem('ai_builder_keys');
-    return stored ? JSON.parse(stored) : {
-      openai: '',
-      anthropic: '',
-      gemini: '',
-    };
-  });
-  
-  // Generated code
-  const [generatedCode, setGeneratedCode] = useState({
-    html: '',
-    css: '',
-    js: ''
+    return stored ? JSON.parse(stored) : { openai: '', anthropic: '', gemini: '' };
   });
 
-  // Auto-scroll to bottom of chat
+  const [generatedCode, setGeneratedCode] = useState(loadCode);
+
+  // Persist to localStorage
+  useEffect(() => {
+    localStorage.setItem('ai_builder_code', JSON.stringify(generatedCode));
+  }, [generatedCode]);
+
+  useEffect(() => {
+    localStorage.setItem('ai_builder_messages', JSON.stringify(messages));
+  }, [messages]);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  // Save API keys to localStorage
   const saveApiKeys = (keys) => {
     setApiKeys(keys);
     localStorage.setItem('ai_builder_keys', JSON.stringify(keys));
   };
 
-  // Extract code from AI response
+  // Extract code from AI response (supports large projects)
   const extractCode = (text) => {
-    const htmlMatch = text.match(/```html\n([\s\S]*?)```/);
-    const cssMatch = text.match(/```css\n([\s\S]*?)```/);
-    const jsMatch = text.match(/```(?:javascript|js)\n([\s\S]*?)```/);
+    // Match all code blocks - support multiple blocks per language
+    const htmlMatches = [...text.matchAll(/```html\s*\n([\s\S]*?)```/g)];
+    const cssMatches = [...text.matchAll(/```css\s*\n([\s\S]*?)```/g)];
+    const jsMatches = [...text.matchAll(/```(?:javascript|js)\s*\n([\s\S]*?)```/g)];
 
-    return {
-      html: htmlMatch ? htmlMatch[1].trim() : generatedCode.html,
-      css: cssMatch ? cssMatch[1].trim() : generatedCode.css,
-      js: jsMatch ? jsMatch[1].trim() : generatedCode.js
-    };
+    // Combine all matches (for large projects with multiple code blocks)
+    const html = htmlMatches.map(m => m[1].trim()).join('\n\n');
+    const css = cssMatches.map(m => m[1].trim()).join('\n\n');
+    const js = jsMatches.map(m => m[1].trim()).join('\n\n');
+
+    return { html, css, js };
+  };
+
+  // Extract natural language explanation (removing code blocks)
+  const extractExplanation = (text) => {
+    return text
+      .replace(/```html\s*\n[\s\S]*?```/g, '')
+      .replace(/```css\s*\n[\s\S]*?```/g, '')
+      .replace(/```(?:javascript|js)\s*\n[\s\S]*?```/g, '')
+      .replace(/```[\s\S]*?```/g, '') // Remove other code blocks too
+      .trim();
+  };
+
+  // Validate generated code
+  const validateCode = async (code) => {
+    try {
+      const response = await fetch(`${API}/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(code)
+      });
+      if (!response.ok) return null;
+      return await response.json();
+    } catch {
+      return null;
+    }
   };
 
   // Send message to AI
   const sendMessage = async () => {
-    if (!input.trim()) return;
-    
+    if (!input.trim() || isLoading) return;
+
     const currentApiKey = apiKeys[provider];
     if (!currentApiKey || currentApiKey.trim() === '') {
       alert(`Lütfen önce ayarlardan ${provider.toUpperCase()} API anahtarınızı girin.\n\nPlease add your ${provider.toUpperCase()} API key in settings first.`);
@@ -111,19 +165,31 @@ const Builder = () => {
     setMessages(currentMessages);
     setInput('');
     setIsLoading(true);
+    setValidationStatus(null);
+    setPublishStatus(null);
+
+    // Provide context about existing code
+    const contextMessage = {
+      role: 'user',
+      content: `${input}\n\n---\nMevcut kod / Current code (varsa güncelle / update if exists):\n\nHTML var mı: ${generatedCode.html ? 'Evet (' + generatedCode.html.length + ' karakter)' : 'Yok'}\nCSS var mı: ${generatedCode.css ? 'Evet' : 'Yok'}\nJS var mı: ${generatedCode.js ? 'Evet' : 'Yok'}\n\nÖnemli: HTML, CSS ve JavaScript kodlarını ayrı ayrı \`\`\`html, \`\`\`css ve \`\`\`javascript bloklarında ver. Kod dışında kısa bir açıklama yaz. Kodun eksiksiz ve hatasız olduğundan emin ol.`
+    };
+
+    const messagesToSend = [...messages, contextMessage];
+
+    // Setup abort controller
+    abortControllerRef.current = new AbortController();
 
     try {
       const response = await fetch(`${API}/chat`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: currentMessages,
+          messages: messagesToSend,
           api_key: currentApiKey,
           provider,
           model
-        })
+        }),
+        signal: abortControllerRef.current.signal
       });
 
       if (!response.ok) {
@@ -135,130 +201,346 @@ const Builder = () => {
       const decoder = new TextDecoder();
       let assistantMessage = '';
       let messageIndex = -1;
+      let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              
-              if (data.error) {
-                // API key hatası veya diğer hatalar
-                let errorMsg = data.error;
-                if (errorMsg.includes('Incorrect API key') || errorMsg.includes('invalid_api_key')) {
-                  errorMsg = `❌ API anahtarı geçersiz! Lütfen ayarlardan doğru API anahtarını girin.\n\n❌ Invalid API key! Please enter the correct API key in settings.\n\nHata: ${errorMsg}`;
-                } else if (errorMsg.includes('insufficient_quota') || errorMsg.includes('exceeded')) {
-                  errorMsg = `❌ API kotanız dolmuş! Lütfen hesabınıza kredi ekleyin.\n\n❌ API quota exceeded! Please add credits to your account.\n\nHata: ${errorMsg}`;
-                } else {
-                  errorMsg = `❌ Hata / Error:\n${errorMsg}`;
-                }
-                setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
-                setIsLoading(false);
-                return;
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+
+            if (data.error) {
+              let errorMsg = data.error;
+              if (errorMsg.includes('Incorrect API key') || errorMsg.includes('invalid_api_key') || errorMsg.includes('Invalid API')) {
+                errorMsg = `❌ **API anahtarı geçersiz!**\n\nLütfen ayarlardan doğru ${provider.toUpperCase()} API anahtarını girin.\n\nInvalid API key! Please enter the correct ${provider.toUpperCase()} API key in settings.`;
+              } else if (errorMsg.includes('insufficient_quota') || errorMsg.includes('exceeded') || errorMsg.includes('quota')) {
+                errorMsg = `❌ **API kotanız dolmuş!**\n\nLütfen hesabınıza kredi ekleyin veya farklı bir provider deneyin.\n\nAPI quota exceeded! Please add credits or try a different provider.`;
+              } else {
+                errorMsg = `❌ **Hata / Error:**\n\n\`\`\`\n${errorMsg}\n\`\`\``;
               }
-              
-              if (data.content) {
-                assistantMessage += data.content;
-                setMessages(prev => {
-                  const newMessages = [...prev];
-                  if (messageIndex === -1) {
-                    // İlk token - yeni mesaj ekle
-                    newMessages.push({ role: 'assistant', content: assistantMessage });
-                    messageIndex = newMessages.length - 1;
-                  } else {
-                    // Mevcut mesajı güncelle
-                    newMessages[messageIndex] = { role: 'assistant', content: assistantMessage };
-                  }
-                  return newMessages;
+              setMessages(prev => [...prev, { role: 'assistant', content: errorMsg, isError: true }]);
+              setIsLoading(false);
+              return;
+            }
+
+            if (data.content) {
+              assistantMessage += data.content;
+
+              // Extract code in real-time and update tabs
+              const code = extractCode(assistantMessage);
+              const hasNewCode = code.html || code.css || code.js;
+
+              if (hasNewCode) {
+                setGeneratedCode({
+                  html: code.html || generatedCode.html,
+                  css: code.css || generatedCode.css,
+                  js: code.js || generatedCode.js
                 });
               }
-              
-              if (data.done) {
-                // Kodu çıkar ve kaydet
-                const code = extractCode(assistantMessage);
-                if (code.html || code.css || code.js) {
-                  setGeneratedCode(prevCode => ({
-                    html: code.html || prevCode.html,
-                    css: code.css || prevCode.css,
-                    js: code.js || prevCode.js
-                  }));
+
+              // Show only explanation in chat (code goes to tabs)
+              const explanation = extractExplanation(assistantMessage);
+              const chatContent = explanation || (hasNewCode ? '⚡ Kod oluşturuluyor... / Generating code...' : assistantMessage);
+
+              setMessages(prev => {
+                const newMessages = [...prev];
+                if (messageIndex === -1) {
+                  newMessages.push({ role: 'assistant', content: chatContent, hasCode: hasNewCode });
+                  messageIndex = newMessages.length - 1;
+                } else {
+                  newMessages[messageIndex] = { role: 'assistant', content: chatContent, hasCode: hasNewCode };
                 }
-              }
-            } catch (e) {
-              console.error('Parse error:', e, 'Line:', line);
+                return newMessages;
+              });
             }
+
+            if (data.done) {
+              // Final extraction and validation
+              const finalCode = extractCode(assistantMessage);
+              if (finalCode.html || finalCode.css || finalCode.js) {
+                const newCode = {
+                  html: finalCode.html || generatedCode.html,
+                  css: finalCode.css || generatedCode.css,
+                  js: finalCode.js || generatedCode.js
+                };
+                setGeneratedCode(newCode);
+
+                // Validate the code
+                const validation = await validateCode(newCode);
+                if (validation) {
+                  setValidationStatus(validation);
+
+                  // Update the message with validation result
+                  const finalExplanation = extractExplanation(assistantMessage) || 'Website oluşturuldu!';
+                  let statusMsg = '\n\n---\n';
+                  if (validation.valid) {
+                    statusMsg += `✅ **Kod başarıyla oluşturuldu ve doğrulandı!** / Code generated and validated successfully!\n\n`;
+                    statusMsg += `📄 HTML: ${finalCode.html.length} karakter\n`;
+                    statusMsg += `🎨 CSS: ${finalCode.css.length} karakter\n`;
+                    statusMsg += `⚡ JavaScript: ${finalCode.js.length} karakter\n\n`;
+                    statusMsg += `👉 Sol tarafta kodları görebilir ve önizleyebilirsiniz.`;
+                  } else {
+                    statusMsg += `⚠️ **Kodda hatalar tespit edildi:**\n`;
+                    validation.errors.forEach(err => statusMsg += `- ${err}\n`);
+                    if (validation.warnings.length > 0) {
+                      statusMsg += `\n**Uyarılar:**\n`;
+                      validation.warnings.forEach(w => statusMsg += `- ${w}\n`);
+                    }
+                  }
+
+                  setMessages(prev => {
+                    const newMessages = [...prev];
+                    if (messageIndex !== -1) {
+                      newMessages[messageIndex] = {
+                        role: 'assistant',
+                        content: finalExplanation + statusMsg,
+                        hasCode: true,
+                        validated: validation.valid
+                      };
+                    }
+                    return newMessages;
+                  });
+                }
+
+                // Force preview refresh
+                setPreviewKey(k => k + 1);
+                setActiveTab('preview');
+              }
+            }
+          } catch (e) {
+            console.error('Parse error:', e);
           }
         }
       }
     } catch (error) {
+      if (error.name === 'AbortError') return;
       console.error('Chat error:', error);
-      let errorMsg = `❌ Bağlantı hatası / Connection error:\n${error.message}`;
+      let errorMsg = `❌ **Bağlantı hatası / Connection error:**\n\n\`\`\`\n${error.message}\n\`\`\``;
       if (error.message.includes('Failed to fetch')) {
-        errorMsg = `❌ Sunucuya bağlanılamadı! İnternet bağlantınızı kontrol edin.\n\n❌ Cannot connect to server! Check your internet connection.`;
+        errorMsg = `❌ **Sunucuya bağlanılamadı!**\n\nİnternet bağlantınızı kontrol edin.\nCannot connect to server! Check your internet connection.`;
       }
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: errorMsg
-      }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: errorMsg, isError: true }]);
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  // Stop generation
+  const stopGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setIsLoading(false);
+    }
+  };
+
+  // Clear chat and code
+  const clearAll = () => {
+    if (window.confirm('Tüm sohbet ve kodları silmek istediğinizden emin misiniz? / Are you sure you want to clear all chat and code?')) {
+      setMessages([]);
+      setGeneratedCode({ html: '', css: '', js: '' });
+      setValidationStatus(null);
+      setPublishStatus(null);
+      setPublishedUrl(null);
+      localStorage.removeItem('ai_builder_messages');
+      localStorage.removeItem('ai_builder_code');
     }
   };
 
   // Generate preview HTML
   const getPreviewHTML = () => {
-    return `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Preview</title>
-        <style>
-          ${generatedCode.css}
-        </style>
-      </head>
-      <body>
-        ${generatedCode.html}
-        <script>
-          ${generatedCode.js}
-        </script>
-      </body>
-      </html>
-    `;
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Preview</title>
+<style>
+${generatedCode.css}
+</style>
+</head>
+<body>
+${generatedCode.html}
+<script>
+try {
+${generatedCode.js}
+} catch(e) {
+  console.error('Preview error:', e);
+  document.body.innerHTML += '<div style="position:fixed;bottom:10px;right:10px;background:#dc2626;color:white;padding:10px;border-radius:6px;font-family:monospace;font-size:12px;max-width:400px;z-index:9999;">JS Error: ' + e.message + '</div>';
+}
+</script>
+</body>
+</html>`;
+  };
+
+  // Refresh preview
+  const refreshPreview = () => {
+    setPreviewKey(k => k + 1);
   };
 
   // Export as ZIP
   const exportAsZip = async () => {
     const zip = new JSZip();
-    zip.file('index.html', generatedCode.html || '<!DOCTYPE html><html><head><title>Generated Site</title></head><body><h1>No content yet</h1></body></html>');
-    zip.file('styles.css', generatedCode.css || '/* No styles yet */');
-    zip.file('script.js', generatedCode.js || '// No JavaScript yet');
-    
+    zip.file('index.html', `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Website</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+${generatedCode.html || '<h1>Empty website</h1>'}
+<script src="script.js"></script>
+</body>
+</html>`);
+    zip.file('styles.css', generatedCode.css || '/* No styles */');
+    zip.file('script.js', generatedCode.js || '// No JavaScript');
+    zip.file('README.md', `# My AI Generated Website\n\nGenerated with AI Builder\n\n## Files\n- index.html: Main HTML file\n- styles.css: Stylesheet\n- script.js: JavaScript\n\n## Usage\nOpen index.html in your browser.`);
+
     const blob = await zip.generateAsync({ type: 'blob' });
-    saveAs(blob, 'website.zip');
+    saveAs(blob, `website-${Date.now()}.zip`);
   };
 
   // Export individual file
-  const exportFile = (filename, content) => {
-    const blob = new Blob([content || ''], { type: 'text/plain' });
+  const exportFile = (filename, content, type = 'text/plain') => {
+    const blob = new Blob([content || ''], { type });
     saveAs(blob, filename);
   };
 
-  // Copy code to clipboard
+  // Publish site
+  const publishSite = async () => {
+    if (!generatedCode.html && !generatedCode.css && !generatedCode.js) {
+      alert('Yayınlanacak kod yok! / No code to publish!');
+      return;
+    }
+
+    setPublishStatus('publishing');
+    try {
+      const response = await fetch(`${API}/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          html: generatedCode.html,
+          css: generatedCode.css,
+          js: generatedCode.js,
+          title: 'My AI Generated Site'
+        })
+      });
+
+      if (!response.ok) throw new Error('Publish failed');
+      const data = await response.json();
+      const fullUrl = `${BACKEND_URL}${data.url}`;
+      setPublishedUrl(fullUrl);
+      setPublishStatus('published');
+    } catch (error) {
+      setPublishStatus('error');
+      alert(`Yayınlama hatası / Publish error: ${error.message}`);
+    }
+  };
+
+  // Copy code
   const copyCode = (code, type) => {
     navigator.clipboard.writeText(code);
     setCopiedCode(type);
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
-  // Highlight code when switching tabs
+  // Upload media file
+  const uploadMedia = async (file, type) => {
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch(`${API}/upload`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.detail || 'Upload failed');
+      }
+
+      const data = await response.json();
+      const fullUrl = `${BACKEND_URL}${data.url}`;
+      
+      const media = {
+        id: data.file_id,
+        url: fullUrl,
+        filename: data.filename,
+        type,
+        contentType: data.content_type,
+        size: data.size
+      };
+      
+      setUploadedMedia(prev => [...prev, media]);
+      
+      // Auto-add reference to input
+      const mediaPrompt = type === 'image' 
+        ? `[Bu resmi kullan / Use this image: ${fullUrl}]`
+        : `[Bu videoyu kullan / Use this video: ${fullUrl}]`;
+      setInput(prev => prev ? `${prev}\n${mediaPrompt}` : mediaPrompt);
+      
+      return media;
+    } catch (error) {
+      alert(`Yükleme hatası / Upload error: ${error.message}`);
+      return null;
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Handle image upload
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    if (!file.type.startsWith('image/')) {
+      alert('Lütfen sadece resim dosyası seçin / Please select image file only');
+      return;
+    }
+    
+    await uploadMedia(file, 'image');
+    e.target.value = ''; // Reset input
+  };
+
+  // Handle video upload
+  const handleVideoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    if (!file.type.startsWith('video/')) {
+      alert('Lütfen sadece video dosyası seçin / Please select video file only');
+      return;
+    }
+    
+    await uploadMedia(file, 'video');
+    e.target.value = ''; // Reset input
+  };
+
+  // Remove uploaded media
+  const removeMedia = (id) => {
+    setUploadedMedia(prev => prev.filter(m => m.id !== id));
+  };
+
+  // Insert image/video helper
+  const insertMediaPrompt = (type) => {
+    if (type === 'image') {
+      imageInputRef.current?.click();
+    } else {
+      videoInputRef.current?.click();
+    }
+  };
+
   useEffect(() => {
     Prism.highlightAll();
   }, [activeTab, generatedCode]);
@@ -276,175 +558,144 @@ const Builder = () => {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <Code2 className="w-5 h-5 text-blue-500" />
-            <span className="text-lg font-semibold tracking-tight" style={{fontFamily: 'IBM Plex Sans'}}>AI Builder</span>
+            <span className="text-lg font-semibold tracking-tight" style={{ fontFamily: 'IBM Plex Sans' }}>AI Builder</span>
           </div>
+          {(generatedCode.html || generatedCode.css || generatedCode.js) && (
+            <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-green-500/10 border border-green-500/20">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+              <span className="text-xs text-green-400">Kod aktif / Code active</span>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Model Selector */}
-          <div className="flex items-center gap-2">
-            <Select value={provider} onValueChange={(val) => {
-              setProvider(val);
-              setModel(MODELS[val][0].value);
-            }}>
-              <SelectTrigger data-testid="provider-selector" className="w-[140px] h-9 bg-zinc-900 border-zinc-700">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="openai">OpenAI</SelectItem>
-                <SelectItem value="anthropic">Anthropic</SelectItem>
-                <SelectItem value="gemini">Gemini</SelectItem>
-              </SelectContent>
-            </Select>
+          <Select value={provider} onValueChange={(val) => { setProvider(val); setModel(MODELS[val][0].value); }}>
+            <SelectTrigger data-testid="provider-selector" className="w-[140px] h-9 bg-zinc-900 border-zinc-700">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="openai">OpenAI</SelectItem>
+              <SelectItem value="anthropic">Anthropic</SelectItem>
+              <SelectItem value="gemini">Gemini</SelectItem>
+            </SelectContent>
+          </Select>
 
-            <Select value={model} onValueChange={setModel}>
-              <SelectTrigger data-testid="model-selector" className="w-[180px] h-9 bg-zinc-900 border-zinc-700">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {MODELS[provider].map(m => (
-                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <Select value={model} onValueChange={setModel}>
+            <SelectTrigger data-testid="model-selector" className="w-[180px] h-9 bg-zinc-900 border-zinc-700">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MODELS[provider].map(m => (
+                <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-          {/* Settings Dialog */}
+          <Button
+            data-testid="publish-btn"
+            variant="outline"
+            size="sm"
+            onClick={publishSite}
+            disabled={publishStatus === 'publishing'}
+            className="h-9 bg-blue-600 border-blue-500 hover:bg-blue-700 text-white"
+          >
+            {publishStatus === 'publishing' ? (
+              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+            ) : (
+              <Rocket className="w-4 h-4 mr-1" />
+            )}
+            Yayınla / Publish
+          </Button>
+
+          <Button
+            data-testid="clear-btn"
+            variant="outline"
+            size="icon"
+            onClick={clearAll}
+            className="h-9 w-9 bg-zinc-900 border-zinc-700 hover:bg-red-900/50 hover:border-red-700"
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
+
           <Dialog>
             <DialogTrigger asChild>
               <Button data-testid="settings-btn" variant="outline" size="icon" className="h-9 w-9 bg-zinc-900 border-zinc-700 hover:bg-zinc-800">
                 <Settings className="w-4 h-4" />
               </Button>
             </DialogTrigger>
-            <DialogContent className="bg-zinc-950 border-zinc-800 backdrop-blur-xl max-w-lg">
+            <DialogContent className="bg-zinc-950 border-zinc-800 max-w-lg">
               <DialogHeader>
-                <DialogTitle className="text-xl" style={{fontFamily: 'IBM Plex Sans'}}>API Ayarları / API Settings</DialogTitle>
+                <DialogTitle className="text-xl" style={{ fontFamily: 'IBM Plex Sans' }}>API Ayarları / API Settings</DialogTitle>
                 <DialogDescription className="text-zinc-400">
                   API anahtarlarınız yalnızca tarayıcınızda saklanır, asla sunucuya kaydedilmez.
-                  <br />
-                  Your API keys are stored only in your browser, never on the server.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 pt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="openai-key" className="text-sm font-medium flex items-center justify-between">
-                    <span>OpenAI API Key</span>
-                    {apiKeys.openai && (
-                      <span className="text-xs text-green-500 flex items-center gap-1">
-                        <Check className="w-3 h-3" /> Kaydedildi
-                      </span>
-                    )}
-                  </Label>
-                  <Input
-                    id="openai-key"
-                    data-testid="openai-key-input"
-                    type="password"
-                    placeholder="sk-..."
-                    value={apiKeys.openai}
-                    onChange={(e) => saveApiKeys({ ...apiKeys, openai: e.target.value })}
-                    className="bg-zinc-900 border-zinc-700 focus:border-blue-500 font-mono text-xs"
-                  />
-                  <p className="text-xs text-zinc-500">
-                    Almak için: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">platform.openai.com/api-keys</a>
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="anthropic-key" className="text-sm font-medium flex items-center justify-between">
-                    <span>Anthropic API Key</span>
-                    {apiKeys.anthropic && (
-                      <span className="text-xs text-green-500 flex items-center gap-1">
-                        <Check className="w-3 h-3" /> Kaydedildi
-                      </span>
-                    )}
-                  </Label>
-                  <Input
-                    id="anthropic-key"
-                    data-testid="anthropic-key-input"
-                    type="password"
-                    placeholder="sk-ant-..."
-                    value={apiKeys.anthropic}
-                    onChange={(e) => saveApiKeys({ ...apiKeys, anthropic: e.target.value })}
-                    className="bg-zinc-900 border-zinc-700 focus:border-blue-500 font-mono text-xs"
-                  />
-                  <p className="text-xs text-zinc-500">
-                    Almak için: <a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">console.anthropic.com</a>
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="gemini-key" className="text-sm font-medium flex items-center justify-between">
-                    <span>Google Gemini API Key</span>
-                    {apiKeys.gemini && (
-                      <span className="text-xs text-green-500 flex items-center gap-1">
-                        <Check className="w-3 h-3" /> Kaydedildi
-                      </span>
-                    )}
-                  </Label>
-                  <Input
-                    id="gemini-key"
-                    data-testid="gemini-key-input"
-                    type="password"
-                    placeholder="AI..."
-                    value={apiKeys.gemini}
-                    onChange={(e) => saveApiKeys({ ...apiKeys, gemini: e.target.value })}
-                    className="bg-zinc-900 border-zinc-700 focus:border-blue-500 font-mono text-xs"
-                  />
-                  <p className="text-xs text-zinc-500">
-                    Almak için: <a href="https://makersuite.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">makersuite.google.com/app/apikey</a>
-                  </p>
-                </div>
-                <div className="pt-2 border-t border-zinc-800">
-                  <div className="flex items-start gap-2 text-xs text-zinc-500">
-                    <div className="w-4 h-4 rounded bg-blue-600/20 flex items-center justify-center shrink-0 mt-0.5">
-                      <span className="text-blue-500 text-[10px]">ℹ</span>
-                    </div>
-                    <p>
-                      API anahtarınızı girdikten sonra provider ve model seçin, ardından chat'e bir şeyler yazarak test edin.
-                      <br />
-                      After entering your API key, select provider and model, then test by chatting.
-                    </p>
+                {['openai', 'anthropic', 'gemini'].map(p => (
+                  <div key={p} className="space-y-2">
+                    <Label className="text-sm font-medium flex items-center justify-between">
+                      <span>{p.charAt(0).toUpperCase() + p.slice(1)} API Key</span>
+                      {apiKeys[p] && (
+                        <span className="text-xs text-green-500 flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Kaydedildi
+                        </span>
+                      )}
+                    </Label>
+                    <Input
+                      data-testid={`${p}-key-input`}
+                      type="password"
+                      placeholder={p === 'openai' ? 'sk-...' : p === 'anthropic' ? 'sk-ant-...' : 'AI...'}
+                      value={apiKeys[p]}
+                      onChange={(e) => saveApiKeys({ ...apiKeys, [p]: e.target.value })}
+                      className="bg-zinc-900 border-zinc-700 focus:border-blue-500 font-mono text-xs"
+                    />
                   </div>
-                </div>
+                ))}
               </div>
             </DialogContent>
           </Dialog>
         </div>
       </header>
 
+      {/* Published URL Banner */}
+      {publishedUrl && (
+        <div className="border-b border-green-500/20 bg-green-500/5 px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm">
+            <Rocket className="w-4 h-4 text-green-500" />
+            <span className="text-green-400">Site yayınlandı! / Site published!</span>
+            <a href={publishedUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline font-mono text-xs">
+              {publishedUrl}
+            </a>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { navigator.clipboard.writeText(publishedUrl); }}
+            className="h-7 text-xs"
+          >
+            <Copy className="w-3 h-3 mr-1" /> Kopyala
+          </Button>
+        </div>
+      )}
+
       {/* Workspace */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel - Preview/Code */}
         <div className="flex-1 flex flex-col border-r border-zinc-800 bg-zinc-950 relative overflow-hidden">
-          {/* Preview Header */}
           <div className="h-12 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-900/50 shrink-0">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
               <TabsList className="bg-transparent h-auto p-0 gap-1">
-                <TabsTrigger 
-                  data-testid="preview-tab"
-                  value="preview" 
-                  className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider"
-                >
+                <TabsTrigger data-testid="preview-tab" value="preview" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider">
                   Preview
                 </TabsTrigger>
-                <TabsTrigger 
-                  data-testid="html-tab"
-                  value="html" 
-                  className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider"
-                >
-                  HTML
+                <TabsTrigger data-testid="html-tab" value="html" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider">
+                  HTML {generatedCode.html && <span className="ml-1 text-blue-400">•</span>}
                 </TabsTrigger>
-                <TabsTrigger 
-                  data-testid="css-tab"
-                  value="css" 
-                  className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider"
-                >
-                  CSS
+                <TabsTrigger data-testid="css-tab" value="css" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider">
+                  CSS {generatedCode.css && <span className="ml-1 text-blue-400">•</span>}
                 </TabsTrigger>
-                <TabsTrigger 
-                  data-testid="js-tab"
-                  value="js" 
-                  className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider"
-                >
-                  JavaScript
+                <TabsTrigger data-testid="js-tab" value="js" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider">
+                  JavaScript {generatedCode.js && <span className="ml-1 text-blue-400">•</span>}
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -452,43 +703,40 @@ const Builder = () => {
             <div className="flex items-center gap-2">
               {activeTab === 'preview' && (
                 <>
-                  <Button
-                    data-testid="device-desktop"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeviceMode('desktop')}
-                    className={`h-8 w-8 ${deviceMode === 'desktop' ? 'bg-zinc-800' : ''}`}
-                  >
+                  <Button data-testid="refresh-preview-btn" variant="ghost" size="icon" onClick={refreshPreview} className="h-8 w-8">
+                    <RefreshCw className="w-4 h-4" />
+                  </Button>
+                  <div className="w-px h-4 bg-zinc-700 mx-1"></div>
+                  <Button data-testid="device-desktop" variant="ghost" size="icon" onClick={() => setDeviceMode('desktop')} className={`h-8 w-8 ${deviceMode === 'desktop' ? 'bg-zinc-800' : ''}`}>
                     <Monitor className="w-4 h-4" />
                   </Button>
-                  <Button
-                    data-testid="device-tablet"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeviceMode('tablet')}
-                    className={`h-8 w-8 ${deviceMode === 'tablet' ? 'bg-zinc-800' : ''}`}
-                  >
+                  <Button data-testid="device-tablet" variant="ghost" size="icon" onClick={() => setDeviceMode('tablet')} className={`h-8 w-8 ${deviceMode === 'tablet' ? 'bg-zinc-800' : ''}`}>
                     <Tablet className="w-4 h-4" />
                   </Button>
-                  <Button
-                    data-testid="device-mobile"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeviceMode('mobile')}
-                    className={`h-8 w-8 ${deviceMode === 'mobile' ? 'bg-zinc-800' : ''}`}
-                  >
+                  <Button data-testid="device-mobile" variant="ghost" size="icon" onClick={() => setDeviceMode('mobile')} className={`h-8 w-8 ${deviceMode === 'mobile' ? 'bg-zinc-800' : ''}`}>
                     <Smartphone className="w-4 h-4" />
                   </Button>
+                  <div className="w-px h-4 bg-zinc-700 mx-1"></div>
                 </>
               )}
-              
-              <Button
-                data-testid="export-zip-btn"
-                variant="outline"
-                size="sm"
-                onClick={exportAsZip}
-                className="h-8 bg-zinc-900 border-zinc-700 hover:bg-zinc-800 text-xs"
-              >
+
+              {activeTab !== 'preview' && (
+                <Button
+                  data-testid={`export-${activeTab}-btn`}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => exportFile(
+                    activeTab === 'html' ? 'index.html' : activeTab === 'css' ? 'styles.css' : 'script.js',
+                    activeTab === 'html' ? generatedCode.html : activeTab === 'css' ? generatedCode.css : generatedCode.js
+                  )}
+                  className="h-8 bg-zinc-900 border-zinc-700 hover:bg-zinc-800 text-xs"
+                >
+                  <Download className="w-3 h-3 mr-1" />
+                  {activeTab.toUpperCase()}
+                </Button>
+              )}
+
+              <Button data-testid="export-zip-btn" variant="outline" size="sm" onClick={exportAsZip} className="h-8 bg-zinc-900 border-zinc-700 hover:bg-zinc-800 text-xs">
                 <Download className="w-3 h-3 mr-1" />
                 ZIP
               </Button>
@@ -496,92 +744,93 @@ const Builder = () => {
           </div>
 
           {/* Content Area */}
-          <div className="flex-1 overflow-auto bg-zinc-950">
-            <Tabs value={activeTab} className="h-full">
-              <TabsContent value="preview" className="h-full m-0 p-4 data-[state=active]:flex items-start justify-center">
+          <div className="flex-1 overflow-hidden bg-zinc-950">
+            <Tabs value={activeTab} className="h-full flex flex-col">
+              <TabsContent value="preview" className="flex-1 m-0 p-4 data-[state=active]:flex items-start justify-center overflow-auto">
                 <div className={`${deviceWidths[deviceMode]} h-full bg-white rounded-lg overflow-hidden shadow-2xl transition-all duration-300`}>
-                  {generatedCode.html ? (
+                  {(generatedCode.html || generatedCode.css || generatedCode.js) ? (
                     <iframe
+                      key={previewKey}
                       data-testid="preview-iframe"
                       srcDoc={getPreviewHTML()}
                       className="w-full h-full border-0"
-                      sandbox="allow-scripts"
+                      sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
                       title="Preview"
                     />
                   ) : (
-                    <div className="h-full flex items-center justify-center text-zinc-500 bg-zinc-900">
-                      <div className="text-center">
-                        <Code2 className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                        <p className="text-sm">No website generated yet</p>
-                        <p className="text-xs mt-1">Start chatting to create your website</p>
+                    <div className="h-full flex items-center justify-center bg-zinc-900">
+                      <div className="text-center text-zinc-500 max-w-md p-6">
+                        <Code2 className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                        <p className="text-lg font-medium text-zinc-300 mb-2">Henüz website oluşturulmadı</p>
+                        <p className="text-sm text-zinc-500">Sağ taraftaki chat'e istediğinizi yazın</p>
                       </div>
                     </div>
                   )}
                 </div>
               </TabsContent>
 
-              <TabsContent value="html" className="h-full m-0 p-4 overflow-auto">
-                <div className="relative">
-                  <Button
-                    data-testid="copy-html-btn"
-                    size="sm"
-                    onClick={() => copyCode(generatedCode.html, 'html')}
-                    className="absolute top-2 right-2 z-10 h-8 bg-zinc-800 hover:bg-zinc-700"
-                  >
-                    {copiedCode === 'html' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  </Button>
-                  <pre className="language-html"><code className="language-html">{generatedCode.html || '<!-- No HTML yet -->'}</code></pre>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="css" className="h-full m-0 p-4 overflow-auto">
-                <div className="relative">
-                  <Button
-                    data-testid="copy-css-btn"
-                    size="sm"
-                    onClick={() => copyCode(generatedCode.css, 'css')}
-                    className="absolute top-2 right-2 z-10 h-8 bg-zinc-800 hover:bg-zinc-700"
-                  >
-                    {copiedCode === 'css' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  </Button>
-                  <pre className="language-css"><code className="language-css">{generatedCode.css || '/* No CSS yet */'}</code></pre>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="js" className="h-full m-0 p-4 overflow-auto">
-                <div className="relative">
-                  <Button
-                    data-testid="copy-js-btn"
-                    size="sm"
-                    onClick={() => copyCode(generatedCode.js, 'js')}
-                    className="absolute top-2 right-2 z-10 h-8 bg-zinc-800 hover:bg-zinc-700"
-                  >
-                    {copiedCode === 'js' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  </Button>
-                  <pre className="language-javascript"><code className="language-javascript">{generatedCode.js || '// No JavaScript yet'}</code></pre>
-                </div>
-              </TabsContent>
+              {['html', 'css', 'js'].map((lang) => (
+                <TabsContent key={lang} value={lang} className="flex-1 m-0 overflow-auto">
+                  <div className="relative min-h-full">
+                    {generatedCode[lang] ? (
+                      <>
+                        <Button
+                          data-testid={`copy-${lang}-btn`}
+                          size="sm"
+                          onClick={() => copyCode(generatedCode[lang], lang)}
+                          className="absolute top-4 right-4 z-10 h-8 bg-zinc-800 hover:bg-zinc-700"
+                        >
+                          {copiedCode === lang ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                        </Button>
+                        <pre className={`language-${lang === 'js' ? 'javascript' : lang === 'html' ? 'markup' : 'css'} !bg-zinc-950 !m-0 !rounded-none !p-4 !min-h-full text-xs`}>
+                          <code className={`language-${lang === 'js' ? 'javascript' : lang === 'html' ? 'markup' : 'css'}`}>
+                            {generatedCode[lang]}
+                          </code>
+                        </pre>
+                      </>
+                    ) : (
+                      <div className="h-full min-h-[400px] flex items-center justify-center text-zinc-600 text-sm">
+                        <div className="text-center">
+                          <Code2 className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                          <p>Henüz {lang.toUpperCase()} kodu yok</p>
+                          <p className="text-xs mt-1">Chat'te bir website istediğinizde burada görünecek</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+              ))}
             </Tabs>
           </div>
         </div>
 
         {/* Right Panel - Chat */}
-        <div className="w-[400px] shrink-0 flex flex-col bg-zinc-900/30">
-          {/* Chat Messages */}
-          <div data-testid="chat-messages" className="flex-1 overflow-y-auto p-4 space-y-6">
+        <div className="w-[420px] shrink-0 flex flex-col bg-zinc-900/30">
+          <div data-testid="chat-messages" className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-center text-zinc-500 px-6">
+              <div className="h-full flex items-center justify-center text-center text-zinc-500 px-4">
                 <div className="max-w-md">
                   <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-zinc-800/50 flex items-center justify-center">
                     <Code2 className="w-8 h-8 text-zinc-600" />
                   </div>
                   <h3 className="text-base font-medium text-zinc-300 mb-2">Websiteni oluşturmaya başla</h3>
-                  <p className="text-sm text-zinc-500 mb-4">AI ile kolayca website oluştur. Örnek komutlar:</p>
+                  <p className="text-sm text-zinc-500 mb-4">Örnek komutlar:</p>
                   <div className="space-y-2 text-xs text-left bg-zinc-900/50 rounded-lg p-4 border border-zinc-800">
-                    <p className="text-zinc-400">• "Bir SaaS ürünü için landing page yap"</p>
-                    <p className="text-zinc-400">• "Fotoğrafçı için modern portfolio sitesi"</p>
-                    <p className="text-zinc-400">• "Blog sayfası yap sidebar ile"</p>
-                    <p className="text-zinc-400">• "Restoran menü sayfası oluştur"</p>
+                    <button onClick={() => setInput('Bir web oyunu yap: renkli topları toplayan oyun (canvas)')} className="w-full text-left text-zinc-400 hover:text-blue-400 transition-colors">
+                      🎮 "Bir web oyunu yap: renkli topları toplayan oyun"
+                    </button>
+                    <button onClick={() => setInput('Fotoğrafçı için modern portfolio sitesi (galeri, iletişim, hakkımda bölümleriyle)')} className="w-full text-left text-zinc-400 hover:text-blue-400 transition-colors">
+                      📸 "Fotoğrafçı için modern portfolio sitesi"
+                    </button>
+                    <button onClick={() => setInput('Bir SaaS ürünü için landing page (hero, özellikler, fiyatlar, footer)')} className="w-full text-left text-zinc-400 hover:text-blue-400 transition-colors">
+                      🚀 "SaaS ürünü için landing page"
+                    </button>
+                    <button onClick={() => setInput('Restoran menü sitesi: yemek kategorileri, fiyatlar, resimler, sipariş formu')} className="w-full text-left text-zinc-400 hover:text-blue-400 transition-colors">
+                      🍽️ "Restoran menü sitesi"
+                    </button>
+                    <button onClick={() => setInput('Yılan oyunu yap (Snake game) klasik retro tarzda, skorla')} className="w-full text-left text-zinc-400 hover:text-blue-400 transition-colors">
+                      🐍 "Klasik yılan oyunu"
+                    </button>
                   </div>
                   <p className="text-xs text-zinc-600 mt-4">⚠️ Önce ayarlardan API anahtarınızı ekleyin</p>
                 </div>
@@ -596,23 +845,30 @@ const Builder = () => {
                   ) : (
                     <div data-testid={`ai-message-${idx}`} className="w-full">
                       <div className="flex items-start gap-3">
-                        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 shrink-0 mt-1">
-                          <Code2 className="w-4 h-4 text-blue-500" />
+                        <div className={`flex items-center justify-center w-8 h-8 rounded-full shrink-0 mt-1 border ${msg.isError ? 'bg-red-900/30 border-red-700' : msg.validated ? 'bg-green-900/30 border-green-700' : 'bg-zinc-800 border-zinc-700'}`}>
+                          {msg.isError ? (
+                            <AlertCircle className="w-4 h-4 text-red-400" />
+                          ) : msg.validated ? (
+                            <Check className="w-4 h-4 text-green-400" />
+                          ) : (
+                            <Code2 className="w-4 h-4 text-blue-500" />
+                          )}
                         </div>
-                        <div className="flex-1 text-sm text-zinc-100 prose prose-invert prose-sm max-w-none prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-800 prose-code:text-blue-400">
-                          <ReactMarkdown 
+                        <div className="flex-1 text-sm text-zinc-100 prose prose-invert prose-sm max-w-none">
+                          <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
-                              code({node, inline, className, children, ...props}) {
+                              code({ inline, className, children, ...props }) {
                                 return inline ? (
                                   <code className="px-1.5 py-0.5 rounded bg-zinc-800 text-blue-400 text-xs font-mono" {...props}>
                                     {children}
                                   </code>
                                 ) : (
-                                  <code className={className} {...props}>
-                                    {children}
-                                  </code>
+                                  <code className={className} {...props}>{children}</code>
                                 );
+                              },
+                              pre({ children }) {
+                                return <pre className="bg-zinc-900 border border-zinc-800 rounded-md p-3 overflow-x-auto text-xs">{children}</pre>;
                               }
                             }}
                           >
@@ -633,18 +889,107 @@ const Builder = () => {
                   </div>
                   <div className="flex-1 pt-1">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className="text-sm font-medium text-zinc-200">AI düşünüyor / AI is thinking</span>
+                      <span className="text-sm font-medium text-zinc-200">AI düşünüyor ve kod oluşturuyor</span>
                     </div>
                     <div className="flex gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{animationDelay: '0ms'}}></div>
-                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{animationDelay: '150ms'}}></div>
-                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{animationDelay: '300ms'}}></div>
+                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '300ms' }}></div>
                     </div>
                   </div>
                 </div>
               </div>
             )}
             <div ref={chatEndRef} />
+          </div>
+
+          {/* Hidden file inputs */}
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleImageUpload}
+            className="hidden"
+            data-testid="image-upload-input"
+          />
+          <input
+            ref={videoInputRef}
+            type="file"
+            accept="video/*"
+            onChange={handleVideoUpload}
+            className="hidden"
+            data-testid="video-upload-input"
+          />
+
+          {/* Uploaded Media Thumbnails */}
+          {uploadedMedia.length > 0 && (
+            <div className="px-4 py-2 border-t border-zinc-800 bg-zinc-900/50">
+              <p className="text-xs text-zinc-500 mb-2">Yüklenen medya / Uploaded media:</p>
+              <div className="flex gap-2 flex-wrap">
+                {uploadedMedia.map(media => (
+                  <div key={media.id} className="relative group" data-testid={`media-thumb-${media.id}`}>
+                    {media.type === 'image' ? (
+                      <img 
+                        src={media.url} 
+                        alt={media.filename}
+                        className="w-16 h-16 object-cover rounded-md border border-zinc-700"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 rounded-md border border-zinc-700 bg-zinc-800 flex items-center justify-center">
+                        <Video className="w-6 h-6 text-zinc-500" />
+                      </div>
+                    )}
+                    <button
+                      onClick={() => removeMedia(media.id)}
+                      className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      data-testid={`remove-media-${media.id}`}
+                    >
+                      <span className="text-white text-xs leading-none">×</span>
+                    </button>
+                    <div className="absolute inset-x-0 bottom-0 bg-black/70 text-[9px] text-white px-1 py-0.5 truncate rounded-b-md">
+                      {media.filename.substring(0, 12)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Media Buttons */}
+          <div className="px-4 py-2 border-t border-zinc-800 bg-zinc-950/30 flex gap-2">
+            <Button
+              data-testid="add-image-btn"
+              variant="ghost"
+              size="sm"
+              onClick={() => insertMediaPrompt('image')}
+              disabled={isUploading}
+              className="h-7 text-xs text-zinc-400 hover:text-blue-400 disabled:opacity-50"
+            >
+              {isUploading ? (
+                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+              ) : (
+                <ImageIcon className="w-3 h-3 mr-1" />
+              )}
+              Resim yükle
+            </Button>
+            <Button
+              data-testid="add-video-btn"
+              variant="ghost"
+              size="sm"
+              onClick={() => insertMediaPrompt('video')}
+              disabled={isUploading}
+              className="h-7 text-xs text-zinc-400 hover:text-blue-400 disabled:opacity-50"
+            >
+              {isUploading ? (
+                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+              ) : (
+                <Video className="w-3 h-3 mr-1" />
+              )}
+              Video yükle
+            </Button>
+            <div className="ml-auto text-xs text-zinc-600 self-center">
+              Max 10MB
+            </div>
           </div>
 
           {/* Input Area */}
@@ -660,21 +1005,28 @@ const Builder = () => {
                     sendMessage();
                   }
                 }}
-                placeholder="Website'nizi tarif edin... (Örn: Bir SaaS ürünü için landing page yap)"
+                placeholder="Website'nizi tarif edin veya değişiklik isteyin..."
                 className="flex-1 min-h-[60px] max-h-[120px] resize-none bg-zinc-900 border-zinc-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 text-sm"
+                disabled={isLoading}
               />
-              <Button
-                data-testid="send-btn"
-                onClick={sendMessage}
-                disabled={isLoading || !input.trim()}
-                className="h-[60px] w-[60px] bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isLoading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
+              {isLoading ? (
+                <Button
+                  data-testid="stop-btn"
+                  onClick={stopGeneration}
+                  className="h-[60px] w-[60px] bg-red-600 hover:bg-red-700"
+                >
+                  <div className="w-4 h-4 bg-white rounded-sm"></div>
+                </Button>
+              ) : (
+                <Button
+                  data-testid="send-btn"
+                  onClick={sendMessage}
+                  disabled={!input.trim()}
+                  className="h-[60px] w-[60px] bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                >
                   <Send className="w-5 h-5" />
-                )}
-              </Button>
+                </Button>
+              )}
             </div>
           </div>
         </div>

@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 2 comprehensive testing of new AI Website Builder features: /api/validate, /api/publish, /api/site/{id} endpoints and new UI (publish/clear/refresh/media buttons, code-in-tabs, localStorage persistence). Backend: 11/11 pytest tests pass. Frontend: all 17 data-testids visible & functional, example command buttons fill input, add-image/add-video append prompts, missing API key shows Turkish/English alert, invalid API key surfaces error message in chat (no silent fail), publish flow returns real /api/site/{id} URL and site is retrievable via GET, refresh-preview works, clear-btn wipes localStorage code+messages, HTML tab shows blue dot indicator when code exists.",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "passed": [
+    "GET /api/ → 200",
+    "POST /api/validate clean code → valid=true",
+    "POST /api/validate mismatched CSS/JS braces → returns errors, valid=false",
+    "POST /api/validate empty body → 200, valid=true, checked flags false",
+    "POST /api/validate unclosed div → warning returned",
+    "POST /api/publish + GET /api/site/{id} → site persisted in MongoDB, HTML/CSS/JS/title round-trip verified",
+    "GET /api/site/nonexistent → 404",
+    "POST /api/publish empty body → 200 success",
+    "POST /api/chat with invalid key → 200 SSE stream with error event (no 500 crash)",
+    "POST /api/chat with missing fields → 422 validation error",
+    "All 17 data-testids visible: publish-btn, clear-btn, refresh-preview-btn, add-image-btn, add-video-btn, settings-btn, provider-selector, model-selector, chat-input, send-btn, preview/html/css/js-tab, device-desktop/tablet/mobile, export-zip-btn",
+    "Example command buttons fill chat-input (Yılan oyunu tested)",
+    "add-image-btn appends picsum.photos image prompt",
+    "add-video-btn appends video prompt (newline separated)",
+    "Empty API key → alert (Turkish + English)",
+    "API keys persist to localStorage under ai_builder_keys",
+    "HTML tab shows blue dot '•' indicator when generatedCode.html exists",
+    "Publish button returns URL banner with backend /api/site/{id} link",
+    "Refresh preview button re-renders iframe",
+    "Clear button wipes localStorage messages and code (with confirm dialog)",
+    "Preview iframe renders when code exists"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Builder.jsx is 890 lines — consider splitting into ChatPanel, PreviewPanel, HeaderBar sub-components for maintainability",
+    "sendMessage() closure captures stale generatedCode when merging incremental HTML/CSS/JS — currently mitigated because full code blocks arrive together, but could cause tab flicker on partial streams. Consider using functional setState with prev.",
+    "publishSite has no per-site cleanup/expiration policy; published_sites collection will grow unbounded",
+    "insertMediaPrompt uses setInput(prev => ...) with functional form OK, but the initial 'test' scenarios show newline concatenation may produce awkward prompts if user clears input mid-way",
+    "extractCode regex only matches ```html / ```css / ```javascript|js — AI may emit ```HTML or ```JS (case) which would be missed; consider /i flag"
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "TEST_PublishTitle and TEST_Empty published sites created in MongoDB db.published_sites (not cleaned up — no delete endpoint exists).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend endpoints /api/validate, /api/publish, /api/site/{id} fully verified with pytest (backend_test.py, 11 tests). Frontend Builder.jsx: all new features work — publish flow end-to-end verified (button → backend → banner URL → GET returns HTML). Full AI generation still requires real user-supplied API key; invalid key path is exercised & error surfaces in chat. Note: automation logs suggest main agent was concurrently editing server.py (introducing UploadFile imports without importing them — F821 undefined name warning) and Builder.jsx (added 'Resim yükle'/'Video yükle' file upload UI visible in screenshot). If file-upload feature is added, will need retest."
+}
