@@ -126,3 +126,53 @@ class TestChat:
     def test_chat_missing_fields_returns_422(self, client):
         r = client.post(f"{API}/chat", json={"messages": []})
         assert r.status_code == 422
+
+
+# ---------- Upload + File retrieval ----------
+import io
+
+# 1x1 PNG
+PNG_BYTES = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
+    "890000000d49444154789c626001000000050001a5f645400000000049454e44ae426082"
+)
+
+
+class TestUpload:
+    def test_upload_image_and_retrieve(self):
+        s = requests.Session()
+        files = {"file": ("test.png", io.BytesIO(PNG_BYTES), "image/png")}
+        r = s.post(f"{API}/upload", files=files)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["success"] is True
+        assert "file_id" in data
+        assert data["url"] == f"/api/file/{data['file_id']}"
+        assert data["content_type"] == "image/png"
+        assert data["size"] == len(PNG_BYTES)
+
+        # Retrieve
+        r2 = s.get(f"{BASE_URL}{data['url']}")
+        assert r2.status_code == 200
+        assert r2.headers.get("content-type", "").startswith("image/png")
+        assert r2.content == PNG_BYTES
+
+    def test_upload_rejects_unsupported_type(self):
+        s = requests.Session()
+        files = {"file": ("test.txt", io.BytesIO(b"hello"), "text/plain")}
+        r = s.post(f"{API}/upload", files=files)
+        assert r.status_code == 400
+        assert "not allowed" in r.text.lower() or "file type" in r.text.lower()
+
+    def test_upload_rejects_oversized_file(self):
+        s = requests.Session()
+        big = b"\x00" * (10 * 1024 * 1024 + 100)
+        files = {"file": ("big.png", io.BytesIO(big), "image/png")}
+        r = s.post(f"{API}/upload", files=files)
+        assert r.status_code == 400
+        assert "large" in r.text.lower() or "10mb" in r.text.lower()
+
+    def test_get_nonexistent_file(self):
+        s = requests.Session()
+        r = s.get(f"{API}/file/nonexistent-file-xyz")
+        assert r.status_code == 404
