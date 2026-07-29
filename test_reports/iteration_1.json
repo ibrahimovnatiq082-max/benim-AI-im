@@ -1,0 +1,24 @@
+{
+  "summary": "First-finish smoke test for AI Website Builder. Backend /api/ root and /api/chat streaming endpoint verified (SSE returns proper error for invalid API key, no crash). Frontend Home + Builder pages load, navigation works, split-screen layout renders, settings dialog persists API keys to localStorage, provider/model selectors correctly cascade (OpenAI->GPT-5.4, Anthropic->Claude Sonnet 4.6), chat input accepts text, all code tabs (preview/HTML/CSS/JS) switch, device mode buttons work, Export ZIP + Copy code buttons render. Dark zinc-950 theme applied. Full AI generation flow not tested (requires real user API key).",
+  "tested_scope": ["frontend", "backend", "integration"],
+  "passed": [
+    "GET /api/ returns 200",
+    "POST /api/chat streams SSE and surfaces provider auth errors gracefully (no 500 crash)",
+    "Home page loads with hero, features, Get Started buttons",
+    "Navigation from Home -> /builder works",
+    "Builder split-screen layout (left preview / right chat) renders",
+    "Settings dialog opens; OpenAI/Anthropic/Gemini key inputs accept values and persist to localStorage (ai_builder_keys)",
+    "Provider selector shows OpenAI/Anthropic/Gemini; switching provider auto-updates model (Anthropic -> Claude Sonnet 4.6)",
+    "Chat textarea accepts input with correct placeholder",
+    "Code tabs Preview/HTML/CSS/JavaScript switch correctly",
+    "Device mode buttons (desktop/tablet/mobile) toggle",
+    "Export ZIP and Copy HTML/CSS/JS buttons render",
+    "No console errors during full flow"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": "Full AI code generation + preview iframe rendering + ZIP download content validation deferred to full testing agent (requires a real OpenAI/Anthropic/Gemini API key from user). Latest model IDs (gpt-5.4, claude-sonnet-4-6, gemini-3.1-pro-preview) not validated against provider — will only be exercised once user supplies a key."
+}

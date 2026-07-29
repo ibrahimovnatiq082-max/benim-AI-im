@@ -1,4 +1,5 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -6,10 +7,11 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List
+from typing import List, Optional, Literal
 import uuid
 from datetime import datetime, timezone
-
+from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+import json
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -25,46 +27,70 @@ app = FastAPI()
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
+# Models
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+    api_key: str
+    provider: Literal["openai", "anthropic", "gemini", "qwen", "mistral"]
+    model: str
+    system_message: Optional[str] = "You are an expert web developer. Generate complete, production-ready HTML, CSS, and JavaScript code based on user requirements. Always provide full, working code that can be directly used in a browser. Include all necessary styles and functionality."
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
-
-# Add your routes to the router instead of directly to app
+# Routes
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "AI Website Builder API"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+@api_router.post("/chat")
+async def chat_stream(request: ChatRequest):
+    """Stream AI responses based on user's API key and selected provider/model"""
+    try:
+        # Create a unique session ID for this conversation
+        session_id = str(uuid.uuid4())
+        
+        # Initialize LlmChat with user's API key
+        chat = LlmChat(
+            api_key=request.api_key,
+            session_id=session_id,
+            system_message=request.system_message
+        )
+        
+        # Configure the model based on provider
+        chat.with_model(request.provider, request.model)
+        
+        # Get the last user message
+        last_message = request.messages[-1]
+        user_message = UserMessage(text=last_message.content)
+        
+        # Stream response
+        async def event_generator():
+            try:
+                async for event in chat.stream_message(user_message):
+                    if isinstance(event, TextDelta):
+                        # Send each token as SSE
+                        yield f"data: {json.dumps({'content': event.content})}\n\n"
+                    elif isinstance(event, StreamDone):
+                        yield f"data: {json.dumps({'done': True})}\n\n"
+                        break
+            except Exception as e:
+                error_msg = str(e)
+                yield f"data: {json.dumps({'error': error_msg})}\n\n"
+        
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive"
+            }
+        )
+    except Exception as e:
+        logging.error(f"Chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Include the router in the main app
 app.include_router(api_router)
