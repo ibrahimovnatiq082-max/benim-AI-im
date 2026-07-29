@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Sparkles, Code2, Zap, Globe } from 'lucide-react';
+import { Sparkles, Code2, Zap, Globe, Mic, Figma } from 'lucide-react';
+import { PlaterLogo, PlaterLogoText } from '@/components/PlaterLogo';
 
 const Home = () => {
   const navigate = useNavigate();
@@ -10,9 +11,11 @@ const Home = () => {
       {/* Header */}
       <header className="border-b border-zinc-800 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Code2 className="w-6 h-6 text-blue-500" />
-            <span className="text-xl font-semibold tracking-tight" style={{fontFamily: 'IBM Plex Sans'}}>AI Builder</span>
+          <div className="flex items-center gap-3">
+            <PlaterLogo size={36} />
+            <span className="text-2xl tracking-tight">
+              <PlaterLogoText />
+            </span>
           </div>
           <Button
             data-testid="get-started-btn"
@@ -33,12 +36,14 @@ const Home = () => {
           </div>
           
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-tight" style={{fontFamily: 'IBM Plex Sans'}}>
-            Build Websites with
-            <span className="block text-blue-500 mt-2">Artificial Intelligence</span>
+            Build Anything with
+            <span className="block mt-2">
+              <PlaterLogoText />
+            </span>
           </h1>
           
           <p className="text-lg text-zinc-400 max-w-2xl mx-auto leading-relaxed">
-            Use your own API keys to generate websites instantly. Support for OpenAI, Claude, Gemini, and more. Create, preview, and export in seconds.
+            Sesli konuşma, otomatik dil algılama, 3D oyunlar, portfolyolar ve daha fazlası. Kendi API anahtarlarınızı kullanın, Figma'ya aktarın, tek tıkla yayınlayın.
           </p>
 
           <div className="flex items-center justify-center gap-4 pt-4">
@@ -53,29 +58,37 @@ const Home = () => {
           </div>
 
           {/* Features */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-12">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 pt-12">
             <div className="p-6 rounded-lg bg-zinc-900/30 border border-zinc-800">
               <div className="w-12 h-12 rounded-lg bg-blue-600/10 flex items-center justify-center mb-4 mx-auto">
                 <Zap className="w-6 h-6 text-blue-500" />
               </div>
-              <h3 className="text-lg font-medium mb-2" style={{fontFamily: 'IBM Plex Sans'}}>Lightning Fast</h3>
-              <p className="text-sm text-zinc-400">Generate complete websites in seconds with AI-powered code generation</p>
+              <h3 className="text-base font-medium mb-2" style={{fontFamily: 'IBM Plex Sans'}}>Hızlı</h3>
+              <p className="text-xs text-zinc-400">Saniyeler içinde website oluştur</p>
             </div>
             
             <div className="p-6 rounded-lg bg-zinc-900/30 border border-zinc-800">
-              <div className="w-12 h-12 rounded-lg bg-blue-600/10 flex items-center justify-center mb-4 mx-auto">
-                <Globe className="w-6 h-6 text-blue-500" />
+              <div className="w-12 h-12 rounded-lg bg-purple-600/10 flex items-center justify-center mb-4 mx-auto">
+                <Mic className="w-6 h-6 text-purple-500" />
               </div>
-              <h3 className="text-lg font-medium mb-2" style={{fontFamily: 'IBM Plex Sans'}}>Live Preview</h3>
-              <p className="text-sm text-zinc-400">See your website come to life in real-time with instant preview</p>
+              <h3 className="text-base font-medium mb-2" style={{fontFamily: 'IBM Plex Sans'}}>Sesli</h3>
+              <p className="text-xs text-zinc-400">Konuşarak website tarif et</p>
             </div>
             
             <div className="p-6 rounded-lg bg-zinc-900/30 border border-zinc-800">
-              <div className="w-12 h-12 rounded-lg bg-blue-600/10 flex items-center justify-center mb-4 mx-auto">
-                <Code2 className="w-6 h-6 text-blue-500" />
+              <div className="w-12 h-12 rounded-lg bg-pink-600/10 flex items-center justify-center mb-4 mx-auto">
+                <Figma className="w-6 h-6 text-pink-500" />
               </div>
-              <h3 className="text-lg font-medium mb-2" style={{fontFamily: 'IBM Plex Sans'}}>Export Anywhere</h3>
-              <p className="text-sm text-zinc-400">Download your project as ZIP or individual files</p>
+              <h3 className="text-base font-medium mb-2" style={{fontFamily: 'IBM Plex Sans'}}>Figma</h3>
+              <p className="text-xs text-zinc-400">Figma'da aç ve düzenle</p>
+            </div>
+            
+            <div className="p-6 rounded-lg bg-zinc-900/30 border border-zinc-800">
+              <div className="w-12 h-12 rounded-lg bg-green-600/10 flex items-center justify-center mb-4 mx-auto">
+                <Globe className="w-6 h-6 text-green-500" />
+              </div>
+              <h3 className="text-base font-medium mb-2" style={{fontFamily: 'IBM Plex Sans'}}>Yayınla</h3>
+              <p className="text-xs text-zinc-400">Tek tıkla siteni paylaş</p>
             </div>
           </div>
         </div>
@@ -84,7 +97,7 @@ const Home = () => {
       {/* Footer */}
       <footer className="border-t border-zinc-800 px-6 py-4">
         <div className="max-w-7xl mx-auto text-center text-sm text-zinc-500">
-          Built with AI • Your keys, your data, your control
+          Plater AI • Kendi anahtarınız, kendi kontrolünüz
         </div>
       </footer>
     </div>

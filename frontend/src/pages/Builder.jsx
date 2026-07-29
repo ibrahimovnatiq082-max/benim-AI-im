@@ -12,7 +12,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Settings, Send, Download, Monitor, Tablet, Smartphone, Code2, Loader2, Copy, Check, Rocket, AlertCircle, Image as ImageIcon, Video, RefreshCw, Trash2, Plus, History, X, FileCode } from 'lucide-react';
+import { Settings, Send, Download, Monitor, Tablet, Smartphone, Code2, Loader2, Copy, Check, Rocket, AlertCircle, Image as ImageIcon, Video, RefreshCw, Trash2, Plus, History, X, FileCode, Mic, MicOff, Figma } from 'lucide-react';
+import { PlaterLogo, PlaterLogoText } from '@/components/PlaterLogo';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Prism from 'prismjs';
@@ -107,10 +108,13 @@ const Builder = () => {
   const [projects, setProjects] = useState(loadProjects);
   const [currentProjectId, setCurrentProjectId] = useState(loadCurrentProjectId);
   const [showProjectHistory, setShowProjectHistory] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
   const chatEndRef = useRef(null);
   const abortControllerRef = useRef(null);
   const imageInputRef = useRef(null);
   const videoInputRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   const [apiKeys, setApiKeys] = useState(() => {
     const stored = localStorage.getItem('ai_builder_keys');
@@ -465,6 +469,103 @@ const Builder = () => {
     }
   };
 
+  // Initialize speech recognition
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      setSpeechSupported(true);
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = navigator.language || 'tr-TR';
+
+      recognition.onresult = (event) => {
+        const transcript = Array.from(event.results)
+          .map(result => result[0].transcript)
+          .join('');
+        setInput(transcript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsRecording(false);
+      };
+
+      recognition.onend = () => {
+        setIsRecording(false);
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
+  // Toggle voice recording
+  const toggleVoiceInput = () => {
+    if (!speechSupported) {
+      alert('Tarayıcınız sesli girişi desteklemiyor. Chrome veya Edge kullanın.\nYour browser does not support voice input. Use Chrome or Edge.');
+      return;
+    }
+
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+    } else {
+      try {
+        recognitionRef.current?.start();
+        setIsRecording(true);
+      } catch (e) {
+        console.error('Failed to start recognition:', e);
+        setIsRecording(false);
+      }
+    }
+  };
+
+  // Export to Figma-compatible format (HTML with html.to.design URL)
+  const exportToFigma = () => {
+    if (!generatedCode.html && !generatedCode.css) {
+      alert('Figma\'ya aktarmak için önce kod oluşturun.\nGenerate code first to export to Figma.');
+      return;
+    }
+
+    // Build a complete standalone HTML for Figma import
+    const fullHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plater AI Design Export</title>
+<style>
+${generatedCode.css}
+</style>
+</head>
+<body>
+${generatedCode.html}
+<script>
+${generatedCode.js}
+</script>
+</body>
+</html>`;
+
+    // Download as HTML file for Figma import
+    const blob = new Blob([fullHtml], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'plater-ai-figma-export.html';
+    a.click();
+    URL.revokeObjectURL(url);
+
+    // Open Figma html.to.design in a new tab
+    setTimeout(() => {
+      const openFigma = window.confirm(
+        'HTML dosyası indirildi!\n\nFigma\'ya aktarmak için:\n1. https://www.figma.com/community/plugin/1159123024924461424 (html.to.design) plugin\'ini kurun\n2. Figma\'da yeni dosya açın\n3. Plugin\'i çalıştırın ve indirdiğiniz HTML dosyasını yükleyin\n\nFigma\'yı şimdi açalım mı?\n\nHTML file downloaded!\n\nTo import to Figma:\n1. Install html.to.design plugin\n2. Open new Figma file\n3. Run plugin and upload the HTML file\n\nOpen Figma now?'
+      );
+      if (openFigma) {
+        window.open('https://www.figma.com/community/plugin/1159123024924461424', '_blank');
+      }
+    }, 500);
+  };
+
   // Generate preview HTML - supports external libraries
   const getPreviewHTML = () => {
     // Extract any <script src> or <link href> from HTML for placement in <head>
@@ -697,8 +798,10 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
       <header className="h-14 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-950 shrink-0">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <Code2 className="w-5 h-5 text-blue-500" />
-            <span className="text-lg font-semibold tracking-tight" style={{ fontFamily: 'IBM Plex Sans' }}>AI Builder</span>
+            <PlaterLogo size={28} />
+            <span className="text-lg tracking-tight">
+              <PlaterLogoText />
+            </span>
           </div>
           {(generatedCode.html || generatedCode.css || generatedCode.js) && (
             <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-green-500/10 border border-green-500/20">
@@ -743,6 +846,18 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
           </Button>
 
           <Button
+            data-testid="figma-export-btn"
+            variant="outline"
+            size="sm"
+            onClick={exportToFigma}
+            className="h-9 bg-zinc-900 border-zinc-700 hover:bg-purple-900/30 hover:border-purple-500"
+            title="Figma'ya aktar / Export to Figma"
+          >
+            <Figma className="w-4 h-4 mr-1" />
+            Figma
+          </Button>
+
+          <Button
             data-testid="publish-btn"
             variant="outline"
             size="sm"
@@ -774,9 +889,9 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                 <Settings className="w-4 h-4" />
               </Button>
             </DialogTrigger>
-            <DialogContent className="bg-zinc-950 border-zinc-800 max-w-lg">
+            <DialogContent className="bg-zinc-950 border-zinc-800 max-w-lg text-zinc-100">
               <DialogHeader>
-                <DialogTitle className="text-xl" style={{ fontFamily: 'IBM Plex Sans' }}>API Ayarları / API Settings</DialogTitle>
+                <DialogTitle className="text-xl text-zinc-100" style={{ fontFamily: 'IBM Plex Sans' }}>API Ayarları / API Settings</DialogTitle>
                 <DialogDescription className="text-zinc-400">
                   API anahtarlarınız yalnızca tarayıcınızda saklanır, asla sunucuya kaydedilmez.
                 </DialogDescription>
@@ -784,10 +899,10 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
               <div className="space-y-4 pt-4">
                 {['openai', 'anthropic', 'gemini'].map(p => (
                   <div key={p} className="space-y-2">
-                    <Label className="text-sm font-medium flex items-center justify-between">
+                    <Label className="text-sm font-medium flex items-center justify-between text-zinc-200">
                       <span>{p.charAt(0).toUpperCase() + p.slice(1)} API Key</span>
                       {apiKeys[p] && (
-                        <span className="text-xs text-green-500 flex items-center gap-1">
+                        <span className="text-xs text-green-400 flex items-center gap-1">
                           <Check className="w-3 h-3" /> Kaydedildi
                         </span>
                       )}
@@ -798,7 +913,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                       placeholder={p === 'openai' ? 'sk-...' : p === 'anthropic' ? 'sk-ant-...' : 'AI...'}
                       value={apiKeys[p]}
                       onChange={(e) => saveApiKeys({ ...apiKeys, [p]: e.target.value })}
-                      className="bg-zinc-900 border-zinc-700 focus:border-blue-500 font-mono text-xs"
+                      className="bg-zinc-900 border-zinc-700 focus:border-blue-500 font-mono text-xs text-zinc-100 placeholder:text-zinc-500"
                     />
                   </div>
                 ))}
@@ -1156,28 +1271,39 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                     sendMessage();
                   }
                 }}
-                placeholder="Website'nizi tarif edin veya değişiklik isteyin..."
-                className="flex-1 min-h-[60px] max-h-[120px] resize-none bg-zinc-900 border-zinc-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 text-sm"
+                placeholder={isRecording ? "🎤 Dinliyor... / Listening..." : "Website'nizi tarif edin veya değişiklik isteyin..."}
+                className="flex-1 min-h-[60px] max-h-[120px] resize-none bg-zinc-900 border-zinc-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 text-sm text-zinc-100 placeholder:text-zinc-500"
                 disabled={isLoading}
               />
-              {isLoading ? (
+              <div className="flex flex-col gap-2">
                 <Button
-                  data-testid="stop-btn"
-                  onClick={stopGeneration}
-                  className="h-[60px] w-[60px] bg-red-600 hover:bg-red-700"
+                  data-testid="voice-btn"
+                  onClick={toggleVoiceInput}
+                  disabled={isLoading || !speechSupported}
+                  className={`h-[28px] w-[60px] ${isRecording ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-zinc-800 hover:bg-zinc-700'} disabled:opacity-30`}
+                  title={speechSupported ? (isRecording ? 'Durdur / Stop' : 'Sesli giriş / Voice input') : 'Tarayıcı desteklemiyor'}
                 >
-                  <div className="w-4 h-4 bg-white rounded-sm"></div>
+                  {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 </Button>
-              ) : (
-                <Button
-                  data-testid="send-btn"
-                  onClick={sendMessage}
-                  disabled={!input.trim()}
-                  className="h-[60px] w-[60px] bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-                >
-                  <Send className="w-5 h-5" />
-                </Button>
-              )}
+                {isLoading ? (
+                  <Button
+                    data-testid="stop-btn"
+                    onClick={stopGeneration}
+                    className="h-[28px] w-[60px] bg-red-600 hover:bg-red-700"
+                  >
+                    <div className="w-3 h-3 bg-white rounded-sm"></div>
+                  </Button>
+                ) : (
+                  <Button
+                    data-testid="send-btn"
+                    onClick={sendMessage}
+                    disabled={!input.trim()}
+                    className="h-[28px] w-[60px] bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    <Send className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </div>
