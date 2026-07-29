@@ -81,3 +81,10 @@ memory/test_credentials.md
 # Mobile development
 android-sdk/repo.zip
 repo-clean.zip
+.env
+.env.*
+*.env
+credentials.json
+*.key
+.credentials
+repo.zip
