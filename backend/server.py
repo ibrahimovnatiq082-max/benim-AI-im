@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 import json
+from agents import AgentRequest, run_multi_agent_pipeline, AGENTS
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -372,6 +373,49 @@ async def get_published_site(site_id: str):
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
     return HTMLResponse(content=site["html"])
+
+@api_router.post("/agents/execute")
+async def execute_multi_agent(request: AgentRequest):
+    """Execute the multi-agent pipeline for website generation"""
+    async def event_generator():
+        try:
+            async for event in run_multi_agent_pipeline(
+                user_prompt=request.user_prompt,
+                api_key=request.api_key,
+                provider=request.provider,
+                model=request.model,
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'pipeline_error', 'error': str(e)[:200]})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@api_router.get("/agents/list")
+async def list_agents():
+    """List all available agents"""
+    return {
+        "agents": [
+            {
+                "id": agent_id,
+                "name": AGENTS[agent_id]["name"],
+                "icon": AGENTS[agent_id]["icon"],
+                "color": AGENTS[agent_id]["color"],
+                "estimated_seconds": AGENTS[agent_id]["estimated_seconds"],
+            }
+            for agent_id in AGENTS
+        ]
+    }
+
 
 # Include the router in the main app
 app.include_router(api_router)
