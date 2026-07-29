@@ -12,8 +12,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Settings, Send, Download, Monitor, Tablet, Smartphone, Code2, Loader2, Copy, Check, Rocket, AlertCircle, Image as ImageIcon, Video, RefreshCw, Trash2, Plus, History, X, FileCode, Mic, MicOff, Figma } from 'lucide-react';
+import { Settings, Send, Download, Monitor, Tablet, Smartphone, Code2, Loader2, Copy, Check, Rocket, AlertCircle, Image as ImageIcon, Video, RefreshCw, Trash2, Plus, History, X, FileCode, Mic, MicOff, Figma, Sun, Moon } from 'lucide-react';
 import { PlaterLogo, PlaterLogoText } from '@/components/PlaterLogo';
+import { WelcomeScreen } from '@/components/WelcomeScreen';
+import { ThinkingAnimation } from '@/components/ThinkingAnimation';
+import { toast } from 'sonner';
+import { useAppTheme } from '@/App';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Prism from 'prismjs';
@@ -91,6 +95,7 @@ const generateProjectName = (messages) => {
 };
 
 const Builder = () => {
+  const { theme, toggleTheme } = useAppTheme();
   const [messages, setMessages] = useState(loadMessages);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -110,6 +115,12 @@ const Builder = () => {
   const [showProjectHistory, setShowProjectHistory] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(() => {
+    const stored = localStorage.getItem('ai_builder_messages');
+    const hasMessages = stored && JSON.parse(stored).length > 0;
+    return !hasMessages;
+  });
+  const [welcomeTransitioning, setWelcomeTransitioning] = useState(false);
   const chatEndRef = useRef(null);
   const abortControllerRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -266,7 +277,10 @@ const Builder = () => {
 
     const currentApiKey = apiKeys[provider];
     if (!currentApiKey || currentApiKey.trim() === '') {
-      alert(`Lütfen önce ayarlardan ${provider.toUpperCase()} API anahtarınızı girin.\n\nPlease add your ${provider.toUpperCase()} API key in settings first.`);
+      toast.error('API anahtarı eksik', {
+        description: `Ayarlardan ${provider.toUpperCase()} API anahtarınızı ekleyin`,
+        duration: 4000,
+      });
       return;
     }
 
@@ -332,15 +346,41 @@ const Builder = () => {
             const data = JSON.parse(line.slice(6));
 
             if (data.error) {
-              let errorMsg = data.error;
-              if (errorMsg.includes('Incorrect API key') || errorMsg.includes('invalid_api_key') || errorMsg.includes('Invalid API')) {
-                errorMsg = `❌ **API anahtarı geçersiz!**\n\nLütfen ayarlardan doğru ${provider.toUpperCase()} API anahtarını girin.\n\nInvalid API key! Please enter the correct ${provider.toUpperCase()} API key in settings.`;
-              } else if (errorMsg.includes('insufficient_quota') || errorMsg.includes('exceeded') || errorMsg.includes('quota')) {
-                errorMsg = `❌ **API kotanız dolmuş!**\n\nLütfen hesabınıza kredi ekleyin veya farklı bir provider deneyin.\n\nAPI quota exceeded! Please add credits or try a different provider.`;
+              let shortError = 'Bilinmeyen hata';
+              let description = '';
+              
+              if (data.error.includes('Incorrect API key') || data.error.includes('invalid_api_key') || data.error.includes('Invalid API')) {
+                shortError = 'API Anahtarı Geçersiz';
+                description = `${provider.toUpperCase()} anahtarınızı kontrol edin`;
+              } else if (data.error.includes('insufficient_quota') || data.error.includes('exceeded') || data.error.includes('quota')) {
+                shortError = 'API Kotası Dolmuş';
+                description = 'Hesabınıza kredi ekleyin veya başka provider deneyin';
+              } else if (data.error.includes('rate_limit') || data.error.includes('rate limit')) {
+                shortError = 'Çok Fazla İstek';
+                description = 'Biraz bekleyip tekrar deneyin';
+              } else if (data.error.includes('model_not_found') || data.error.includes('does not exist')) {
+                shortError = 'Model Bulunamadı';
+                description = 'Farklı bir model seçin';
+              } else if (data.error.includes('overloaded') || data.error.includes('unavailable')) {
+                shortError = 'Sunucu Meşgul';
+                description = 'Kısa bir süre sonra tekrar deneyin';
               } else {
-                errorMsg = `❌ **Hata / Error:**\n\n\`\`\`\n${errorMsg}\n\`\`\``;
+                shortError = 'API Hatası';
+                description = data.error.substring(0, 100);
               }
-              setMessages(prev => [...prev, { role: 'assistant', content: errorMsg, isError: true }]);
+              
+              // Show toast notification instead of injecting into chat
+              toast.error(shortError, {
+                description,
+                duration: 5000,
+              });
+              
+              // Also add short message to chat
+              setMessages(prev => [...prev, { 
+                role: 'assistant', 
+                content: `❌ **${shortError}**\n${description}`, 
+                isError: true 
+              }]);
               setIsLoading(false);
               return;
             }
@@ -437,11 +477,25 @@ const Builder = () => {
     } catch (error) {
       if (error.name === 'AbortError') return;
       console.error('Chat error:', error);
-      let errorMsg = `❌ **Bağlantı hatası / Connection error:**\n\n\`\`\`\n${error.message}\n\`\`\``;
+      
+      let shortError = 'Bağlantı Hatası';
+      let description = error.message.substring(0, 100);
+      
       if (error.message.includes('Failed to fetch')) {
-        errorMsg = `❌ **Sunucuya bağlanılamadı!**\n\nİnternet bağlantınızı kontrol edin.\nCannot connect to server! Check your internet connection.`;
+        shortError = 'Sunucuya Bağlanılamıyor';
+        description = 'İnternet bağlantınızı kontrol edin';
       }
-      setMessages(prev => [...prev, { role: 'assistant', content: errorMsg, isError: true }]);
+      
+      toast.error(shortError, {
+        description,
+        duration: 5000,
+      });
+      
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: `❌ **${shortError}**\n${description}`, 
+        isError: true 
+      }]);
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
@@ -502,7 +556,10 @@ const Builder = () => {
   // Toggle voice recording
   const toggleVoiceInput = () => {
     if (!speechSupported) {
-      alert('Tarayıcınız sesli girişi desteklemiyor. Chrome veya Edge kullanın.\nYour browser does not support voice input. Use Chrome or Edge.');
+      toast.error('Sesli giriş desteklenmiyor', {
+        description: 'Chrome veya Edge tarayıcı kullanın',
+        duration: 4000,
+      });
       return;
     }
 
@@ -523,7 +580,10 @@ const Builder = () => {
   // Export to Figma-compatible format (HTML with html.to.design URL)
   const exportToFigma = () => {
     if (!generatedCode.html && !generatedCode.css) {
-      alert('Figma\'ya aktarmak için önce kod oluşturun.\nGenerate code first to export to Figma.');
+      toast.warning('Kod yok', {
+        description: 'Figma\'ya aktarmak için önce kod oluşturun',
+        duration: 3500,
+      });
       return;
     }
 
@@ -659,7 +719,10 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
   // Publish site
   const publishSite = async () => {
     if (!generatedCode.html && !generatedCode.css && !generatedCode.js) {
-      alert('Yayınlanacak kod yok! / No code to publish!');
+      toast.warning('Yayınlanacak kod yok', {
+        description: 'Önce bir website oluşturun',
+        duration: 3500,
+      });
       return;
     }
 
@@ -681,9 +744,16 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
       const fullUrl = `${BACKEND_URL}${data.url}`;
       setPublishedUrl(fullUrl);
       setPublishStatus('published');
+      toast.success('Site yayınlandı!', {
+        description: 'URL kopyalamak için banner\'a tıklayın',
+        duration: 4000,
+      });
     } catch (error) {
       setPublishStatus('error');
-      alert(`Yayınlama hatası / Publish error: ${error.message}`);
+      toast.error('Yayınlama başarısız', {
+        description: error.message.substring(0, 80),
+        duration: 4000,
+      });
     }
   };
 
@@ -733,7 +803,10 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
       
       return media;
     } catch (error) {
-      alert(`Yükleme hatası / Upload error: ${error.message}`);
+      toast.error('Yükleme başarısız', {
+        description: error.message.substring(0, 80),
+        duration: 4000,
+      });
       return null;
     } finally {
       setIsUploading(false);
@@ -746,7 +819,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
     if (!file) return;
     
     if (!file.type.startsWith('image/')) {
-      alert('Lütfen sadece resim dosyası seçin / Please select image file only');
+      toast.error('Geçersiz dosya', { description: 'Sadece resim dosyası seçin', duration: 3000 });
       return;
     }
     
@@ -760,7 +833,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
     if (!file) return;
     
     if (!file.type.startsWith('video/')) {
-      alert('Lütfen sadece video dosyası seçin / Please select video file only');
+      toast.error('Geçersiz dosya', { description: 'Sadece video dosyası seçin', duration: 3000 });
       return;
     }
     
@@ -792,10 +865,63 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
     mobile: 'w-[375px]'
   };
 
+  // Handle welcome submit - auto-fill and send with smooth transition
+  const handleWelcomeSubmit = (prompt) => {
+    setWelcomeTransitioning(true);
+    // Fade out welcome, fade in builder
+    setTimeout(() => {
+      setShowWelcome(false);
+      setWelcomeTransitioning(false);
+      setInput(prompt);
+      // Auto-send after transition
+      setTimeout(() => {
+        const currentApiKey = apiKeys[provider];
+        if (currentApiKey && currentApiKey.trim() !== '') {
+          sendMessageWithPrompt(prompt);
+        } else {
+          toast.warning('API anahtarı gerekli', {
+            description: 'Ayarlardan API anahtarınızı ekleyin',
+            duration: 4000,
+          });
+        }
+      }, 300);
+    }, 600); // Wait for exit animation
+  };
+
+  const handleWelcomeSkip = () => {
+    setWelcomeTransitioning(true);
+    setTimeout(() => {
+      setShowWelcome(false);
+      setWelcomeTransitioning(false);
+    }, 400);
+  };
+
+  // Send message with explicit prompt (for welcome auto-send)
+  const sendMessageWithPrompt = async (promptText) => {
+    if (!promptText.trim() || isLoading) return;
+    const currentApiKey = apiKeys[provider];
+    if (!currentApiKey || currentApiKey.trim() === '') return;
+    
+    setInput(promptText);
+    setTimeout(() => {
+      const btn = document.querySelector('[data-testid="send-btn"]');
+      if (btn && !btn.disabled) btn.click();
+    }, 50);
+  };
+
   return (
-    <div className="h-screen w-full flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden">
+    <>
+      {showWelcome && (
+        <div className={welcomeTransitioning ? 'animate-fadeOut' : ''}>
+          <WelcomeScreen 
+            onSubmit={handleWelcomeSubmit} 
+            onSkip={handleWelcomeSkip}
+          />
+        </div>
+      )}
+    <div className={`h-screen w-full flex flex-col overflow-hidden transition-colors duration-300 ${theme === 'dark' ? 'bg-zinc-950 text-zinc-100' : 'bg-white text-zinc-900'}`}>
       {/* Header */}
-      <header className="h-14 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-950 shrink-0">
+      <header className={`h-14 border-b flex items-center justify-between px-4 shrink-0 transition-colors duration-300 ${theme === 'dark' ? 'border-zinc-800 bg-zinc-950' : 'border-zinc-200 bg-white'}`}>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <PlaterLogo size={28} />
@@ -883,6 +1009,17 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
             <Trash2 className="w-4 h-4" />
           </Button>
 
+          <Button
+            data-testid="theme-toggle-btn"
+            variant="outline"
+            size="icon"
+            onClick={toggleTheme}
+            className={`h-9 w-9 border-zinc-700 ${theme === 'dark' ? 'bg-zinc-900 hover:bg-zinc-800 text-yellow-400' : 'bg-white hover:bg-zinc-100 text-blue-500 border-zinc-300'}`}
+            title={theme === 'dark' ? 'Açık tema / Light mode' : 'Koyu tema / Dark mode'}
+          >
+            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </Button>
+
           <Dialog>
             <DialogTrigger asChild>
               <Button data-testid="settings-btn" variant="outline" size="icon" className="h-9 w-9 bg-zinc-900 border-zinc-700 hover:bg-zinc-800">
@@ -947,8 +1084,8 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
       {/* Workspace */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel - Preview/Code */}
-        <div className="flex-1 flex flex-col border-r border-zinc-800 bg-zinc-950 relative overflow-hidden">
-          <div className="h-12 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-900/50 shrink-0">
+        <div className={`flex-1 flex flex-col border-r relative overflow-hidden transition-colors duration-300 ${theme === 'dark' ? 'border-zinc-800 bg-zinc-950' : 'border-zinc-200 bg-white'}`}>
+          <div className={`h-12 border-b flex items-center justify-between px-4 shrink-0 transition-colors duration-300 ${theme === 'dark' ? 'border-zinc-800 bg-zinc-900/50' : 'border-zinc-200 bg-zinc-50'}`}>
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1">
               <TabsList className="bg-transparent h-auto p-0 gap-1">
                 <TabsTrigger data-testid="preview-tab" value="preview" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider">
@@ -1071,7 +1208,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
         </div>
 
         {/* Right Panel - Chat */}
-        <div className="w-[420px] shrink-0 flex flex-col bg-zinc-900/30">
+        <div className={`w-[420px] shrink-0 flex flex-col transition-colors duration-300 ${theme === 'dark' ? 'bg-zinc-900/30' : 'bg-zinc-50'}`}>
           <div data-testid="chat-messages" className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.length === 0 ? (
               <div className="h-full flex items-center justify-center text-center text-zinc-500 px-4">
@@ -1148,23 +1285,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
               ))
             )}
             {isLoading && (
-              <div className="message-enter">
-                <div className="flex items-start gap-3 p-4 bg-zinc-800/30 rounded-lg border border-zinc-700/50">
-                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600/20 shrink-0">
-                    <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                  </div>
-                  <div className="flex-1 pt-1">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-sm font-medium text-zinc-200">AI düşünüyor ve kod oluşturuyor</span>
-                    </div>
-                    <div className="flex gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <ThinkingAnimation userMessage={messages[messages.length - 1]?.content || ''} />
             )}
             <div ref={chatEndRef} />
           </div>
@@ -1259,7 +1380,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
           </div>
 
           {/* Input Area */}
-          <div className="p-4 border-t border-zinc-800 bg-zinc-950/50 shrink-0">
+          <div className={`p-4 border-t shrink-0 transition-colors duration-300 ${theme === 'dark' ? 'border-zinc-800 bg-zinc-950/50' : 'border-zinc-200 bg-white'}`}>
             <div className="flex gap-2">
               <Textarea
                 data-testid="chat-input"
@@ -1272,7 +1393,11 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                   }
                 }}
                 placeholder={isRecording ? "🎤 Dinliyor... / Listening..." : "Website'nizi tarif edin veya değişiklik isteyin..."}
-                className="flex-1 min-h-[60px] max-h-[120px] resize-none bg-zinc-900 border-zinc-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 text-sm text-zinc-100 placeholder:text-zinc-500"
+                className={`flex-1 min-h-[60px] max-h-[120px] resize-none focus:ring-1 text-sm transition-colors duration-300 ${
+                  theme === 'dark' 
+                    ? 'bg-zinc-900 border-zinc-700 focus:border-blue-500 focus:ring-blue-500/50 text-zinc-100 placeholder:text-zinc-500'
+                    : 'bg-white border-zinc-300 focus:border-blue-500 focus:ring-blue-500/50 text-zinc-900 placeholder:text-zinc-500'
+                }`}
                 disabled={isLoading}
               />
               <div className="flex flex-col gap-2">
@@ -1311,8 +1436,8 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
 
       {/* Project History Bar - Bottom */}
       {projects.length > 0 && (
-        <div className="border-t border-zinc-800 bg-zinc-950 shrink-0">
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800/50">
+        <div className={`border-t shrink-0 transition-colors duration-300 ${theme === 'dark' ? 'border-zinc-800 bg-zinc-950' : 'border-zinc-200 bg-white'}`}>
+          <div className={`flex items-center gap-2 px-4 py-2 border-b transition-colors duration-300 ${theme === 'dark' ? 'border-zinc-800/50' : 'border-zinc-100'}`}>
             <History className="w-4 h-4 text-zinc-500" />
             <span className="text-xs uppercase tracking-wider text-zinc-500 font-medium">
               Son Projeler / Recent Projects ({projects.length})
@@ -1359,6 +1484,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
         </div>
       )}
     </div>
+    </>
   );
 };
 
