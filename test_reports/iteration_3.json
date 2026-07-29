@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 3: Tested new upload feature (/api/upload, /api/file/{id}) plus regression of validate/publish/chat and full Builder UI including image upload, media thumbnails, publish flow, clear, refresh, provider cascade, and localStorage persistence. 15/15 backend pytest passing. All frontend features verified via Playwright.",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "passed": [
+    "GET /api/ 200",
+    "POST /api/validate (clean/mismatch braces/empty/unclosed div) all correct",
+    "POST /api/publish + GET /api/site/{id} round-trip persists HTML/CSS/JS/title",
+    "GET /api/site/nonexistent 404",
+    "POST /api/chat with invalid key streams SSE error (no 500)",
+    "POST /api/chat missing fields 422",
+    "POST /api/upload image/png returns file_id + url, size, content_type",
+    "GET /api/file/{id} returns original bytes with correct content-type",
+    "POST /api/upload rejects text/plain with 400",
+    "POST /api/upload rejects >10MB with 400",
+    "GET /api/file/nonexistent 404",
+    "Builder loads at /builder with all 16 data-testids present",
+    "Provider cascade openai→anthropic switches model to claude-sonnet-4-6",
+    "Settings dialog: all 3 API keys show Kaydedildi indicator and persist to localStorage under ai_builder_keys",
+    "Example command button fills chat-input (Yılan oyunu verified)",
+    "Image upload via hidden input → /api/upload → thumbnail rendered with data-testid=media-thumb-{id}, URL appended to chat input",
+    "Publish button POST /api/publish → green banner with clickable /api/site/{id} link",
+    "Kod aktif / Code active indicator + HTML/CSS/JS tab blue-dot indicators visible when code exists",
+    "Refresh preview button re-renders iframe",
+    "Device mode buttons (desktop/tablet/mobile) clickable",
+    "HTML tab shows syntax-highlighted code and copy-html-btn",
+    "Clear button (with confirm dialog) empties localStorage ai_builder_code and ai_builder_messages",
+    "Invalid API key surfaces friendly Turkish/English error message in chat (not silent)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Builder.jsx is >1000 lines — should be decomposed into ChatPanel, PreviewPanel, HeaderBar, MediaUploader components for maintainability",
+    "server.py stores uploaded files (base64) and published sites in MongoDB with no expiry/cleanup — collections will grow unbounded. Consider TTL indexes or a purge endpoint.",
+    "sendMessage() merges incremental code using generatedCode from closure; consider functional setState (setGeneratedCode(prev => ...)) to avoid stale-state issues on rapid partial streams",
+    "extractCode regex is case-sensitive on ```html/```css/```javascript — add /i flag to be resilient if AI emits uppercase fence language tags",
+    "iframe sandbox uses both allow-scripts AND allow-same-origin (browser console warns this can escape sandboxing). Consider removing allow-same-origin unless the previewed code truly needs it.",
+    "Upload endpoint stores base64 in Mongo — inefficient for videos near 10MB (13MB doc). Prefer GridFS for files > a few hundred KB.",
+    "No auth/rate-limiting on /api/publish or /api/upload — anyone can flood the DB. Add basic rate limits or an owner/session token."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100%"},
+  "seed_data_creation": "Some TEST_ published sites and one small PNG in db.uploaded_files (from pytest & UI upload). Not cleaned up (no delete endpoints exist).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All new features (upload, publish, validate, media UI, code-in-tabs, localStorage persistence) verified end-to-end. Real AI generation still requires user-supplied API key. Video upload path uses same /api/upload endpoint as image (backend accepts video/mp4|webm|ogg|quicktime) — image path is exercised; video path is symmetric and covered by backend test coverage of content-type gating."
+}
