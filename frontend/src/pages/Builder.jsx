@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -53,6 +53,7 @@ const Builder = () => {
   const [deviceMode, setDeviceMode] = useState('desktop');
   const [activeTab, setActiveTab] = useState('preview');
   const [copiedCode, setCopiedCode] = useState(null);
+  const chatEndRef = useRef(null);
   
   // API Keys from localStorage
   const [apiKeys, setApiKeys] = useState(() => {
@@ -70,6 +71,11 @@ const Builder = () => {
     css: '',
     js: ''
   });
+
+  // Auto-scroll to bottom of chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLoading]);
 
   // Save API keys to localStorage
   const saveApiKeys = (keys) => {
@@ -95,13 +101,14 @@ const Builder = () => {
     if (!input.trim()) return;
     
     const currentApiKey = apiKeys[provider];
-    if (!currentApiKey) {
-      alert(`Please add your ${provider} API key in settings`);
+    if (!currentApiKey || currentApiKey.trim() === '') {
+      alert(`Lütfen önce ayarlardan ${provider.toUpperCase()} API anahtarınızı girin.\n\nPlease add your ${provider.toUpperCase()} API key in settings first.`);
       return;
     }
 
     const userMessage = { role: 'user', content: input };
-    setMessages(prev => [...prev, userMessage]);
+    const currentMessages = [...messages, userMessage];
+    setMessages(currentMessages);
     setInput('');
     setIsLoading(true);
 
@@ -112,7 +119,7 @@ const Builder = () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          messages: [...messages, userMessage],
+          messages: currentMessages,
           api_key: currentApiKey,
           provider,
           model
@@ -120,12 +127,14 @@ const Builder = () => {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to get response');
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let assistantMessage = '';
+      let messageIndex = -1;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -138,39 +147,64 @@ const Builder = () => {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
+              
+              if (data.error) {
+                // API key hatası veya diğer hatalar
+                let errorMsg = data.error;
+                if (errorMsg.includes('Incorrect API key') || errorMsg.includes('invalid_api_key')) {
+                  errorMsg = `❌ API anahtarı geçersiz! Lütfen ayarlardan doğru API anahtarını girin.\n\n❌ Invalid API key! Please enter the correct API key in settings.\n\nHata: ${errorMsg}`;
+                } else if (errorMsg.includes('insufficient_quota') || errorMsg.includes('exceeded')) {
+                  errorMsg = `❌ API kotanız dolmuş! Lütfen hesabınıza kredi ekleyin.\n\n❌ API quota exceeded! Please add credits to your account.\n\nHata: ${errorMsg}`;
+                } else {
+                  errorMsg = `❌ Hata / Error:\n${errorMsg}`;
+                }
+                setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
+                setIsLoading(false);
+                return;
+              }
+              
               if (data.content) {
                 assistantMessage += data.content;
                 setMessages(prev => {
                   const newMessages = [...prev];
-                  if (newMessages[newMessages.length - 1]?.role === 'assistant') {
-                    newMessages[newMessages.length - 1].content = assistantMessage;
-                  } else {
+                  if (messageIndex === -1) {
+                    // İlk token - yeni mesaj ekle
                     newMessages.push({ role: 'assistant', content: assistantMessage });
+                    messageIndex = newMessages.length - 1;
+                  } else {
+                    // Mevcut mesajı güncelle
+                    newMessages[messageIndex] = { role: 'assistant', content: assistantMessage };
                   }
                   return newMessages;
                 });
               }
+              
               if (data.done) {
-                // Extract and set generated code
+                // Kodu çıkar ve kaydet
                 const code = extractCode(assistantMessage);
                 if (code.html || code.css || code.js) {
-                  setGeneratedCode(code);
+                  setGeneratedCode(prevCode => ({
+                    html: code.html || prevCode.html,
+                    css: code.css || prevCode.css,
+                    js: code.js || prevCode.js
+                  }));
                 }
               }
-              if (data.error) {
-                throw new Error(data.error);
-              }
             } catch (e) {
-              console.error('Parse error:', e);
+              console.error('Parse error:', e, 'Line:', line);
             }
           }
         }
       }
     } catch (error) {
       console.error('Chat error:', error);
+      let errorMsg = `❌ Bağlantı hatası / Connection error:\n${error.message}`;
+      if (error.message.includes('Failed to fetch')) {
+        errorMsg = `❌ Sunucuya bağlanılamadı! İnternet bağlantınızı kontrol edin.\n\n❌ Cannot connect to server! Check your internet connection.`;
+      }
       setMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: `Error: ${error.message}` 
+        content: errorMsg
       }]);
     } finally {
       setIsLoading(false);
@@ -282,16 +316,25 @@ const Builder = () => {
                 <Settings className="w-4 h-4" />
               </Button>
             </DialogTrigger>
-            <DialogContent className="bg-zinc-950 border-zinc-800 backdrop-blur-xl">
+            <DialogContent className="bg-zinc-950 border-zinc-800 backdrop-blur-xl max-w-lg">
               <DialogHeader>
-                <DialogTitle className="text-xl" style={{fontFamily: 'IBM Plex Sans'}}>API Settings</DialogTitle>
+                <DialogTitle className="text-xl" style={{fontFamily: 'IBM Plex Sans'}}>API Ayarları / API Settings</DialogTitle>
                 <DialogDescription className="text-zinc-400">
-                  Your API keys are stored locally in your browser only.
+                  API anahtarlarınız yalnızca tarayıcınızda saklanır, asla sunucuya kaydedilmez.
+                  <br />
+                  Your API keys are stored only in your browser, never on the server.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 pt-4">
                 <div className="space-y-2">
-                  <Label htmlFor="openai-key" className="text-sm font-medium">OpenAI API Key</Label>
+                  <Label htmlFor="openai-key" className="text-sm font-medium flex items-center justify-between">
+                    <span>OpenAI API Key</span>
+                    {apiKeys.openai && (
+                      <span className="text-xs text-green-500 flex items-center gap-1">
+                        <Check className="w-3 h-3" /> Kaydedildi
+                      </span>
+                    )}
+                  </Label>
                   <Input
                     id="openai-key"
                     data-testid="openai-key-input"
@@ -299,11 +342,21 @@ const Builder = () => {
                     placeholder="sk-..."
                     value={apiKeys.openai}
                     onChange={(e) => saveApiKeys({ ...apiKeys, openai: e.target.value })}
-                    className="bg-zinc-900 border-zinc-700 focus:border-blue-500"
+                    className="bg-zinc-900 border-zinc-700 focus:border-blue-500 font-mono text-xs"
                   />
+                  <p className="text-xs text-zinc-500">
+                    Almak için: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">platform.openai.com/api-keys</a>
+                  </p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="anthropic-key" className="text-sm font-medium">Anthropic API Key</Label>
+                  <Label htmlFor="anthropic-key" className="text-sm font-medium flex items-center justify-between">
+                    <span>Anthropic API Key</span>
+                    {apiKeys.anthropic && (
+                      <span className="text-xs text-green-500 flex items-center gap-1">
+                        <Check className="w-3 h-3" /> Kaydedildi
+                      </span>
+                    )}
+                  </Label>
                   <Input
                     id="anthropic-key"
                     data-testid="anthropic-key-input"
@@ -311,11 +364,21 @@ const Builder = () => {
                     placeholder="sk-ant-..."
                     value={apiKeys.anthropic}
                     onChange={(e) => saveApiKeys({ ...apiKeys, anthropic: e.target.value })}
-                    className="bg-zinc-900 border-zinc-700 focus:border-blue-500"
+                    className="bg-zinc-900 border-zinc-700 focus:border-blue-500 font-mono text-xs"
                   />
+                  <p className="text-xs text-zinc-500">
+                    Almak için: <a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">console.anthropic.com</a>
+                  </p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="gemini-key" className="text-sm font-medium">Google Gemini API Key</Label>
+                  <Label htmlFor="gemini-key" className="text-sm font-medium flex items-center justify-between">
+                    <span>Google Gemini API Key</span>
+                    {apiKeys.gemini && (
+                      <span className="text-xs text-green-500 flex items-center gap-1">
+                        <Check className="w-3 h-3" /> Kaydedildi
+                      </span>
+                    )}
+                  </Label>
                   <Input
                     id="gemini-key"
                     data-testid="gemini-key-input"
@@ -323,8 +386,23 @@ const Builder = () => {
                     placeholder="AI..."
                     value={apiKeys.gemini}
                     onChange={(e) => saveApiKeys({ ...apiKeys, gemini: e.target.value })}
-                    className="bg-zinc-900 border-zinc-700 focus:border-blue-500"
+                    className="bg-zinc-900 border-zinc-700 focus:border-blue-500 font-mono text-xs"
                   />
+                  <p className="text-xs text-zinc-500">
+                    Almak için: <a href="https://makersuite.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">makersuite.google.com/app/apikey</a>
+                  </p>
+                </div>
+                <div className="pt-2 border-t border-zinc-800">
+                  <div className="flex items-start gap-2 text-xs text-zinc-500">
+                    <div className="w-4 h-4 rounded bg-blue-600/20 flex items-center justify-center shrink-0 mt-0.5">
+                      <span className="text-blue-500 text-[10px]">ℹ</span>
+                    </div>
+                    <p>
+                      API anahtarınızı girdikten sonra provider ve model seçin, ardından chat'e bir şeyler yazarak test edin.
+                      <br />
+                      After entering your API key, select provider and model, then test by chatting.
+                    </p>
+                  </div>
                 </div>
               </div>
             </DialogContent>
@@ -492,35 +570,81 @@ const Builder = () => {
           {/* Chat Messages */}
           <div data-testid="chat-messages" className="flex-1 overflow-y-auto p-4 space-y-6">
             {messages.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-center text-zinc-500">
-                <div>
-                  <p className="text-sm mb-2">Start building your website</p>
-                  <p className="text-xs">Try: "Create a landing page for a SaaS product"</p>
+              <div className="h-full flex items-center justify-center text-center text-zinc-500 px-6">
+                <div className="max-w-md">
+                  <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-zinc-800/50 flex items-center justify-center">
+                    <Code2 className="w-8 h-8 text-zinc-600" />
+                  </div>
+                  <h3 className="text-base font-medium text-zinc-300 mb-2">Websiteni oluşturmaya başla</h3>
+                  <p className="text-sm text-zinc-500 mb-4">AI ile kolayca website oluştur. Örnek komutlar:</p>
+                  <div className="space-y-2 text-xs text-left bg-zinc-900/50 rounded-lg p-4 border border-zinc-800">
+                    <p className="text-zinc-400">• "Bir SaaS ürünü için landing page yap"</p>
+                    <p className="text-zinc-400">• "Fotoğrafçı için modern portfolio sitesi"</p>
+                    <p className="text-zinc-400">• "Blog sayfası yap sidebar ile"</p>
+                    <p className="text-zinc-400">• "Restoran menü sayfası oluştur"</p>
+                  </div>
+                  <p className="text-xs text-zinc-600 mt-4">⚠️ Önce ayarlardan API anahtarınızı ekleyin</p>
                 </div>
               </div>
             ) : (
               messages.map((msg, idx) => (
-                <div key={idx} className={`message-enter ${msg.role === 'user' ? 'text-right' : ''}`}>
+                <div key={idx} className={`message-enter ${msg.role === 'user' ? 'flex justify-end' : ''}`}>
                   {msg.role === 'user' ? (
-                    <div data-testid={`user-message-${idx}`} className="inline-block bg-zinc-800 rounded-lg px-4 py-2 text-sm max-w-[85%]">
-                      {msg.content}
+                    <div data-testid={`user-message-${idx}`} className="inline-block bg-blue-600 rounded-lg px-4 py-2.5 text-sm max-w-[85%] shadow-lg">
+                      <p className="text-white whitespace-pre-wrap break-words">{msg.content}</p>
                     </div>
                   ) : (
-                    <div data-testid={`ai-message-${idx}`} className="text-sm prose prose-invert prose-sm max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {msg.content}
-                      </ReactMarkdown>
+                    <div data-testid={`ai-message-${idx}`} className="w-full">
+                      <div className="flex items-start gap-3">
+                        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 shrink-0 mt-1">
+                          <Code2 className="w-4 h-4 text-blue-500" />
+                        </div>
+                        <div className="flex-1 text-sm text-zinc-100 prose prose-invert prose-sm max-w-none prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-800 prose-code:text-blue-400">
+                          <ReactMarkdown 
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              code({node, inline, className, children, ...props}) {
+                                return inline ? (
+                                  <code className="px-1.5 py-0.5 rounded bg-zinc-800 text-blue-400 text-xs font-mono" {...props}>
+                                    {children}
+                                  </code>
+                                ) : (
+                                  <code className={className} {...props}>
+                                    {children}
+                                  </code>
+                                );
+                              }
+                            }}
+                          >
+                            {msg.content}
+                          </ReactMarkdown>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
               ))
             )}
             {isLoading && (
-              <div className="flex items-center gap-2 text-zinc-400 text-sm">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Generating...</span>
+              <div className="message-enter">
+                <div className="flex items-start gap-3 p-4 bg-zinc-800/30 rounded-lg border border-zinc-700/50">
+                  <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600/20 shrink-0">
+                    <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                  </div>
+                  <div className="flex-1 pt-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-sm font-medium text-zinc-200">AI düşünüyor / AI is thinking</span>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{animationDelay: '0ms'}}></div>
+                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{animationDelay: '150ms'}}></div>
+                      <div className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{animationDelay: '300ms'}}></div>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
+            <div ref={chatEndRef} />
           </div>
 
           {/* Input Area */}
@@ -536,16 +660,20 @@ const Builder = () => {
                     sendMessage();
                   }
                 }}
-                placeholder="Describe your website..."
+                placeholder="Website'nizi tarif edin... (Örn: Bir SaaS ürünü için landing page yap)"
                 className="flex-1 min-h-[60px] max-h-[120px] resize-none bg-zinc-900 border-zinc-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 text-sm"
               />
               <Button
                 data-testid="send-btn"
                 onClick={sendMessage}
                 disabled={isLoading || !input.trim()}
-                className="h-[60px] w-[60px] bg-blue-600 hover:bg-blue-700"
+                className="h-[60px] w-[60px] bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Send className="w-5 h-5" />
+                {isLoading ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Send className="w-5 h-5" />
+                )}
               </Button>
             </div>
           </div>
