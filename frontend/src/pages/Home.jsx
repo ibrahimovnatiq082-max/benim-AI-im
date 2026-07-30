@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Sparkles, Code2, Zap, Globe, Mic, Figma } from 'lucide-react';
-import { PlaterLogo, PlaterLogoText } from '@/components/PlaterLogo';
+import { T2Logo, T2LogoText } from '@/components/PlaterLogo';
 
 const Home = () => {
   const navigate = useNavigate();
@@ -12,9 +12,9 @@ const Home = () => {
       <header className="border-b border-zinc-800 px-6 py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <PlaterLogo size={36} />
-            <span className="text-2xl tracking-tight">
-              <PlaterLogoText />
+            <T2Logo size={40} />
+            <span className="text-3xl tracking-tight">
+              <T2LogoText />
             </span>
           </div>
           <Button
@@ -38,7 +38,7 @@ const Home = () => {
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-tight" style={{fontFamily: 'IBM Plex Sans'}}>
             Build Anything with
             <span className="block mt-2">
-              <PlaterLogoText />
+              <T2LogoText />
             </span>
           </h1>
           
@@ -97,7 +97,7 @@ const Home = () => {
       {/* Footer */}
       <footer className="border-t border-zinc-800 px-6 py-4">
         <div className="max-w-7xl mx-auto text-center text-sm text-zinc-500">
-          Plater AI • Kendi anahtarınız, kendi kontrolünüz
+          T2 • Kendi anahtarınız, kendi kontrolünüz
         </div>
       </footer>
     </div>

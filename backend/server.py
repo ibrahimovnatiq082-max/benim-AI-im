@@ -148,7 +148,7 @@ async def handle_groq_chat(request):
                 messages=messages,
                 stream=True,
                 temperature=0.7,
-                max_tokens=8000,
+                max_tokens=32000,
             )
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:

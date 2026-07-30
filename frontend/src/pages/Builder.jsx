@@ -110,7 +110,10 @@ const Builder = () => {
   const [provider, setProvider] = useState('openai');
   const [model, setModel] = useState('gpt-5.4');
   const [deviceMode, setDeviceMode] = useState('desktop');
-  const [activeTab, setActiveTab] = useState('preview');
+  const [activeTab, setActiveTab] = useState(() => {
+    // Migrate old tab names to new unified 'code' tab
+    return 'preview';
+  });
   const [copiedCode, setCopiedCode] = useState(null);
   const [validationStatus, setValidationStatus] = useState(null);
   const [publishStatus, setPublishStatus] = useState(null);
@@ -341,7 +344,20 @@ const Builder = () => {
       let buffer = '';
 
       while (true) {
-        const { done, value } = await reader.read();
+        // Check if aborted
+        if (abortControllerRef.current?.signal.aborted) {
+          try { reader.cancel(); } catch(e) {}
+          break;
+        }
+        
+        let readResult;
+        try {
+          readResult = await reader.read();
+        } catch (e) {
+          if (e.name === 'AbortError' || abortControllerRef.current?.signal.aborted) break;
+          throw e;
+        }
+        const { done, value } = readResult;
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -510,12 +526,29 @@ const Builder = () => {
     }
   };
 
-  // Stop generation
+  // Stop generation - properly abort the request
   const stopGeneration = () => {
     if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      setIsLoading(false);
+      try {
+        abortControllerRef.current.abort('user_stopped');
+      } catch (e) {
+        console.log('Abort called:', e);
+      }
+      abortControllerRef.current = null;
     }
+    setIsLoading(false);
+    toast.info('Durduruldu', {
+      description: 'Kod üretimi kullanıcı tarafından durduruldu',
+      duration: 2500,
+    });
+    // Add stop message
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'assistant' && !last.stopped) {
+        return [...prev.slice(0, -1), { ...last, stopped: true, content: last.content + '\n\n⏹ *Durduruldu / Stopped*' }];
+      }
+      return prev;
+    });
   };
 
   // Clear chat and code
@@ -864,7 +897,13 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
   };
 
   useEffect(() => {
-    Prism.highlightAll();
+    // Delay Prism highlighting to allow DOM updates for large code
+    const timer = setTimeout(() => {
+      if (typeof Prism !== 'undefined') {
+        try { Prism.highlightAll(); } catch(e) { console.error(e); }
+      }
+    }, 100);
+    return () => clearTimeout(timer);
   }, [activeTab, generatedCode]);
 
   const deviceWidths = {
@@ -1113,14 +1152,8 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                 <TabsTrigger data-testid="preview-tab" value="preview" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider">
                   Preview
                 </TabsTrigger>
-                <TabsTrigger data-testid="html-tab" value="html" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider">
-                  HTML {generatedCode.html && <span className="ml-1 text-blue-400">•</span>}
-                </TabsTrigger>
-                <TabsTrigger data-testid="css-tab" value="css" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider">
-                  CSS {generatedCode.css && <span className="ml-1 text-blue-400">•</span>}
-                </TabsTrigger>
-                <TabsTrigger data-testid="js-tab" value="js" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider">
-                  JavaScript {generatedCode.js && <span className="ml-1 text-blue-400">•</span>}
+                <TabsTrigger data-testid="code-tab" value="code" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-zinc-100 h-8 px-3 rounded-md text-xs uppercase tracking-wider">
+                  Code {(generatedCode.html || generatedCode.css || generatedCode.js) && <span className="ml-1 text-blue-400">•</span>}
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -1145,20 +1178,42 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                 </>
               )}
 
-              {activeTab !== 'preview' && (
-                <Button
-                  data-testid={`export-${activeTab}-btn`}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => exportFile(
-                    activeTab === 'html' ? 'index.html' : activeTab === 'css' ? 'styles.css' : 'script.js',
-                    activeTab === 'html' ? generatedCode.html : activeTab === 'css' ? generatedCode.css : generatedCode.js
-                  )}
-                  className="h-8 bg-zinc-900 border-zinc-700 hover:bg-zinc-800 text-xs"
-                >
-                  <Download className="w-3 h-3 mr-1" />
-                  {activeTab.toUpperCase()}
-                </Button>
+              {activeTab === 'code' && (
+                <div className="flex items-center gap-1">
+                  <Button
+                    data-testid="export-html-btn"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => exportFile('index.html', generatedCode.html)}
+                    className="h-8 bg-zinc-900 border-zinc-700 hover:bg-zinc-800 text-xs"
+                    disabled={!generatedCode.html}
+                  >
+                    <Download className="w-3 h-3 mr-1" />
+                    HTML
+                  </Button>
+                  <Button
+                    data-testid="export-css-btn"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => exportFile('styles.css', generatedCode.css)}
+                    className="h-8 bg-zinc-900 border-zinc-700 hover:bg-zinc-800 text-xs"
+                    disabled={!generatedCode.css}
+                  >
+                    <Download className="w-3 h-3 mr-1" />
+                    CSS
+                  </Button>
+                  <Button
+                    data-testid="export-js-btn"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => exportFile('script.js', generatedCode.js)}
+                    className="h-8 bg-zinc-900 border-zinc-700 hover:bg-zinc-800 text-xs"
+                    disabled={!generatedCode.js}
+                  >
+                    <Download className="w-3 h-3 mr-1" />
+                    JS
+                  </Button>
+                </div>
               )}
 
               <Button data-testid="export-zip-btn" variant="outline" size="sm" onClick={exportAsZip} className="h-8 bg-zinc-900 border-zinc-700 hover:bg-zinc-800 text-xs">
@@ -1190,37 +1245,98 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                 </div>
               </TabsContent>
 
-              {['html', 'css', 'js'].map((lang) => (
-                <TabsContent key={lang} value={lang} className="flex-1 m-0 overflow-auto">
-                  <div className="relative min-h-full">
-                    {generatedCode[lang] ? (
-                      <>
-                        <Button
-                          data-testid={`copy-${lang}-btn`}
-                          size="sm"
-                          onClick={() => copyCode(generatedCode[lang], lang)}
-                          className="absolute top-4 right-4 z-10 h-8 bg-zinc-800 hover:bg-zinc-700"
-                        >
-                          {copiedCode === lang ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                        </Button>
-                        <pre className={`language-${lang === 'js' ? 'javascript' : lang === 'html' ? 'markup' : 'css'} !bg-zinc-950 !m-0 !rounded-none !p-4 !min-h-full text-xs`}>
-                          <code className={`language-${lang === 'js' ? 'javascript' : lang === 'html' ? 'markup' : 'css'}`}>
-                            {generatedCode[lang]}
-                          </code>
-                        </pre>
-                      </>
-                    ) : (
-                      <div className="h-full min-h-[400px] flex items-center justify-center text-zinc-600 text-sm">
-                        <div className="text-center">
-                          <Code2 className="w-12 h-12 mx-auto mb-2 opacity-30" />
-                          <p>Henüz {lang.toUpperCase()} kodu yok</p>
-                          <p className="text-xs mt-1">Chat'te bir website istediğinizde burada görünecek</p>
+              {/* Unified Code Tab */}
+              <TabsContent value="code" className="flex-1 m-0 overflow-auto">
+                {(generatedCode.html || generatedCode.css || generatedCode.js) ? (
+                  <div className="min-h-full bg-zinc-950">
+                    {/* HTML Section */}
+                    {generatedCode.html && (
+                      <div className="border-b border-zinc-800/50">
+                        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2 bg-zinc-900/95 backdrop-blur border-b border-zinc-800">
+                          <div className="flex items-center gap-2">
+                            <div className="w-1.5 h-4 rounded-full bg-orange-500"></div>
+                            <span className="text-xs font-mono font-medium text-zinc-300 uppercase tracking-wider">index.html</span>
+                            <span className="text-xs text-zinc-500">{generatedCode.html.length.toLocaleString()} chars</span>
+                          </div>
+                          <Button
+                            data-testid="copy-html-btn"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => copyCode(generatedCode.html, 'html')}
+                            className="h-7 text-xs text-zinc-400 hover:text-zinc-100"
+                          >
+                            {copiedCode === 'html' ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
+                            {copiedCode === 'html' ? 'Kopyalandı' : 'Kopyala'}
+                          </Button>
                         </div>
+                        <pre className="language-markup !bg-zinc-950 !m-0 !rounded-none !p-4 text-xs overflow-x-auto">
+                          <code className="language-markup">{generatedCode.html}</code>
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* CSS Section */}
+                    {generatedCode.css && (
+                      <div className="border-b border-zinc-800/50">
+                        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2 bg-zinc-900/95 backdrop-blur border-b border-zinc-800">
+                          <div className="flex items-center gap-2">
+                            <div className="w-1.5 h-4 rounded-full bg-blue-500"></div>
+                            <span className="text-xs font-mono font-medium text-zinc-300 uppercase tracking-wider">styles.css</span>
+                            <span className="text-xs text-zinc-500">{generatedCode.css.length.toLocaleString()} chars</span>
+                          </div>
+                          <Button
+                            data-testid="copy-css-btn"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => copyCode(generatedCode.css, 'css')}
+                            className="h-7 text-xs text-zinc-400 hover:text-zinc-100"
+                          >
+                            {copiedCode === 'css' ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
+                            {copiedCode === 'css' ? 'Kopyalandı' : 'Kopyala'}
+                          </Button>
+                        </div>
+                        <pre className="language-css !bg-zinc-950 !m-0 !rounded-none !p-4 text-xs overflow-x-auto">
+                          <code className="language-css">{generatedCode.css}</code>
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* JS Section */}
+                    {generatedCode.js && (
+                      <div>
+                        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2 bg-zinc-900/95 backdrop-blur border-b border-zinc-800">
+                          <div className="flex items-center gap-2">
+                            <div className="w-1.5 h-4 rounded-full bg-yellow-500"></div>
+                            <span className="text-xs font-mono font-medium text-zinc-300 uppercase tracking-wider">script.js</span>
+                            <span className="text-xs text-zinc-500">{generatedCode.js.length.toLocaleString()} chars</span>
+                          </div>
+                          <Button
+                            data-testid="copy-js-btn"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => copyCode(generatedCode.js, 'js')}
+                            className="h-7 text-xs text-zinc-400 hover:text-zinc-100"
+                          >
+                            {copiedCode === 'js' ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
+                            {copiedCode === 'js' ? 'Kopyalandı' : 'Kopyala'}
+                          </Button>
+                        </div>
+                        <pre className="language-javascript !bg-zinc-950 !m-0 !rounded-none !p-4 text-xs overflow-x-auto">
+                          <code className="language-javascript">{generatedCode.js}</code>
+                        </pre>
                       </div>
                     )}
                   </div>
-                </TabsContent>
-              ))}
+                ) : (
+                  <div className="h-full min-h-[400px] flex items-center justify-center text-zinc-600 text-sm">
+                    <div className="text-center">
+                      <Code2 className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                      <p>Henüz kod yok</p>
+                      <p className="text-xs mt-1">Chat'te bir website istediğinizde burada görünecek</p>
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
             </Tabs>
           </div>
         </div>
