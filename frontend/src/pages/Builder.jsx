@@ -56,6 +56,15 @@ const MODELS = {
     { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B' },
     { value: 'gemma2-9b-it', label: 'Gemma 2 9B' },
   ],
+  qwen: [
+    { value: 'qwen-max', label: 'Qwen Max (Best)' },
+    { value: 'qwen-plus', label: 'Qwen Plus' },
+    { value: 'qwen-turbo', label: 'Qwen Turbo (Fast)' },
+    { value: 'qwen2.5-72b-instruct', label: 'Qwen 2.5 72B' },
+    { value: 'qwen2.5-32b-instruct', label: 'Qwen 2.5 32B' },
+    { value: 'qwen2.5-14b-instruct', label: 'Qwen 2.5 14B' },
+    { value: 'qwen2.5-coder-32b-instruct', label: 'Qwen Coder 32B (Kod)' },
+  ],
 };
 
 // Load code from localStorage
@@ -140,7 +149,8 @@ const Builder = () => {
 
   const [apiKeys, setApiKeys] = useState(() => {
     const stored = localStorage.getItem('ai_builder_keys');
-    return stored ? { openai: '', anthropic: '', gemini: '', groq: '', ...JSON.parse(stored) } : { openai: '', anthropic: '', gemini: '', groq: '' };
+    const defaults = { openai: '', anthropic: '', gemini: '', groq: '', qwen: '' };
+    return stored ? { ...defaults, ...JSON.parse(stored) } : defaults;
   });
 
   const [generatedCode, setGeneratedCode] = useState(loadCode);
@@ -370,27 +380,28 @@ const Builder = () => {
             const data = JSON.parse(line.slice(6));
 
             if (data.error) {
+              const errStr = String(data.error || '');
               let shortError = 'Bilinmeyen hata';
               let description = '';
               
-              if (data.error.includes('Incorrect API key') || data.error.includes('invalid_api_key') || data.error.includes('Invalid API')) {
+              if (errStr.includes('Incorrect API key') || errStr.includes('invalid_api_key') || errStr.includes('Invalid API')) {
                 shortError = 'API Anahtarı Geçersiz';
                 description = `${provider.toUpperCase()} anahtarınızı kontrol edin`;
-              } else if (data.error.includes('insufficient_quota') || data.error.includes('exceeded') || data.error.includes('quota')) {
+              } else if (errStr.includes('insufficient_quota') || errStr.includes('exceeded') || errStr.includes('quota')) {
                 shortError = 'API Kotası Dolmuş';
                 description = 'Hesabınıza kredi ekleyin veya başka provider deneyin';
-              } else if (data.error.includes('rate_limit') || data.error.includes('rate limit')) {
+              } else if (errStr.includes('rate_limit') || errStr.includes('rate limit')) {
                 shortError = 'Çok Fazla İstek';
                 description = 'Biraz bekleyip tekrar deneyin';
-              } else if (data.error.includes('model_not_found') || data.error.includes('does not exist')) {
+              } else if (errStr.includes('model_not_found') || errStr.includes('does not exist')) {
                 shortError = 'Model Bulunamadı';
                 description = 'Farklı bir model seçin';
-              } else if (data.error.includes('overloaded') || data.error.includes('unavailable')) {
+              } else if (errStr.includes('overloaded') || errStr.includes('unavailable')) {
                 shortError = 'Sunucu Meşgul';
                 description = 'Kısa bir süre sonra tekrar deneyin';
               } else {
                 shortError = 'API Hatası';
-                description = data.error.substring(0, 100);
+                description = errStr.substring(0, 100);
               }
               
               // Show toast notification instead of injecting into chat
@@ -499,13 +510,14 @@ const Builder = () => {
         }
       }
     } catch (error) {
-      if (error.name === 'AbortError') return;
+      if (error.name === 'AbortError' || error.message === 'user_stopped') return;
       console.error('Chat error:', error);
       
+      const errMsg = String(error?.message || error || 'Unknown error');
       let shortError = 'Bağlantı Hatası';
-      let description = error.message.substring(0, 100);
+      let description = errMsg.substring(0, 100);
       
-      if (error.message.includes('Failed to fetch')) {
+      if (errMsg.includes('Failed to fetch')) {
         shortError = 'Sunucuya Bağlanılamıyor';
         description = 'İnternet bağlantınızı kontrol edin';
       }
@@ -792,7 +804,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
     } catch (error) {
       setPublishStatus('error');
       toast.error('Yayınlama başarısız', {
-        description: error.message.substring(0, 80),
+        description: String(error?.message || 'Unknown error').substring(0, 80),
         duration: 4000,
       });
     }
@@ -845,7 +857,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
       return media;
     } catch (error) {
       toast.error('Yükleme başarısız', {
-        description: error.message.substring(0, 80),
+        description: String(error?.message || 'Unknown error').substring(0, 80),
         duration: 4000,
       });
       return null;
@@ -994,6 +1006,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
               <SelectItem value="anthropic">Anthropic</SelectItem>
               <SelectItem value="gemini">Gemini</SelectItem>
               <SelectItem value="groq">Groq ⚡</SelectItem>
+              <SelectItem value="qwen">Qwen 🇨🇳</SelectItem>
             </SelectContent>
           </Select>
 
@@ -1082,12 +1095,17 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 pt-4 max-h-[60vh] overflow-y-auto">
-                {['openai', 'anthropic', 'gemini', 'groq'].map(p => (
+                {['openai', 'anthropic', 'gemini', 'groq', 'qwen'].map(p => (
                   <div key={p} className="space-y-2">
                     <Label className="text-sm font-medium flex items-center justify-between text-zinc-200">
                       <span>
-                        {p.charAt(0).toUpperCase() + p.slice(1)} API Key
+                        {p === 'openai' ? 'OpenAI' :
+                         p === 'anthropic' ? 'Anthropic' :
+                         p === 'gemini' ? 'Gemini' :
+                         p === 'groq' ? 'Groq' :
+                         'Qwen (Alibaba)'} API Key
                         {p === 'groq' && <span className="ml-2 text-xs text-yellow-400">⚡ Ultra Fast</span>}
+                        {p === 'qwen' && <span className="ml-2 text-xs text-pink-400">🇨🇳 China</span>}
                       </span>
                       {apiKeys[p] && (
                         <span className="text-xs text-green-400 flex items-center gap-1">
@@ -1102,6 +1120,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                         p === 'openai' ? 'sk-...' : 
                         p === 'anthropic' ? 'sk-ant-...' : 
                         p === 'groq' ? 'gsk_...' :
+                        p === 'qwen' ? 'sk-...' :
                         'AI...'
                       }
                       value={apiKeys[p] || ''}
@@ -1111,6 +1130,11 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                     {p === 'groq' && (
                       <p className="text-xs text-zinc-500">
                         Ücretsiz key: <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">console.groq.com/keys</a>
+                      </p>
+                    )}
+                    {p === 'qwen' && (
+                      <p className="text-xs text-zinc-500">
+                        Key al: <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">dashscope.console.aliyun.com</a>
                       </p>
                     )}
                   </div>

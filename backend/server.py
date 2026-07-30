@@ -36,7 +36,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     api_key: str
-    provider: Literal["openai", "anthropic", "gemini", "groq"]
+    provider: Literal["openai", "anthropic", "gemini", "groq", "qwen"]
     model: str
     system_message: Optional[str] = """You are an elite full-stack web developer and creative code architect capable of building ANY web project - from simple landing pages to complex 3D games and multi-section portfolios.
 
@@ -126,18 +126,17 @@ async def root():
     return {"message": "AI Website Builder API"}
 
 
-async def handle_groq_chat(request):
-    """Handle Groq API via OpenAI-compatible endpoint with streaming"""
+async def handle_openai_compatible_chat(request, base_url: str, provider_name: str = "provider"):
+    """Generic handler for OpenAI-compatible providers (Groq, Qwen, etc.)"""
     from openai import AsyncOpenAI
     
     client = AsyncOpenAI(
         api_key=request.api_key,
-        base_url="https://api.groq.com/openai/v1"
+        base_url=base_url
     )
     
     # Build messages including system prompt
     messages = [{"role": "system", "content": request.system_message}]
-    # Include last 10 messages for context
     for msg in request.messages[-10:]:
         messages.append({"role": msg.role, "content": msg.content})
     
@@ -170,6 +169,24 @@ async def handle_groq_chat(request):
     )
 
 
+async def handle_groq_chat(request):
+    """Handle Groq API via OpenAI-compatible endpoint"""
+    return await handle_openai_compatible_chat(
+        request,
+        base_url="https://api.groq.com/openai/v1",
+        provider_name="groq"
+    )
+
+
+async def handle_qwen_chat(request):
+    """Handle Qwen (Alibaba DashScope) via OpenAI-compatible endpoint"""
+    return await handle_openai_compatible_chat(
+        request,
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        provider_name="qwen"
+    )
+
+
 @api_router.post("/chat")
 async def chat_stream(request: ChatRequest):
     """Stream AI responses based on user's API key and selected provider/model"""
@@ -177,6 +194,10 @@ async def chat_stream(request: ChatRequest):
         # Handle Groq via direct OpenAI-compatible API
         if request.provider == "groq":
             return await handle_groq_chat(request)
+        
+        # Handle Qwen (Alibaba DashScope) via OpenAI-compatible API
+        if request.provider == "qwen":
+            return await handle_qwen_chat(request)
         
         # Create a unique session ID for this conversation
         session_id = str(uuid.uuid4())
