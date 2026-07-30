@@ -36,7 +36,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[ChatMessage]
     api_key: str
-    provider: Literal["openai", "anthropic", "gemini", "qwen", "mistral"]
+    provider: Literal["openai", "anthropic", "gemini", "groq"]
     model: str
     system_message: Optional[str] = """You are an elite full-stack web developer and creative code architect capable of building ANY web project - from simple landing pages to complex 3D games and multi-section portfolios.
 
@@ -125,10 +125,59 @@ Remember: You are building PRODUCTION-READY code that works PERFECTLY the first 
 async def root():
     return {"message": "AI Website Builder API"}
 
+
+async def handle_groq_chat(request):
+    """Handle Groq API via OpenAI-compatible endpoint with streaming"""
+    from openai import AsyncOpenAI
+    
+    client = AsyncOpenAI(
+        api_key=request.api_key,
+        base_url="https://api.groq.com/openai/v1"
+    )
+    
+    # Build messages including system prompt
+    messages = [{"role": "system", "content": request.system_message}]
+    # Include last 10 messages for context
+    for msg in request.messages[-10:]:
+        messages.append({"role": msg.role, "content": msg.content})
+    
+    async def event_generator():
+        try:
+            stream = await client.chat.completions.create(
+                model=request.model,
+                messages=messages,
+                stream=True,
+                temperature=0.7,
+                max_tokens=8000,
+            )
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    yield f"data: {json.dumps({'content': content})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        except Exception as e:
+            error_msg = str(e)
+            yield f"data: {json.dumps({'error': error_msg})}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive"
+        }
+    )
+
+
 @api_router.post("/chat")
 async def chat_stream(request: ChatRequest):
     """Stream AI responses based on user's API key and selected provider/model"""
     try:
+        # Handle Groq via direct OpenAI-compatible API
+        if request.provider == "groq":
+            return await handle_groq_chat(request)
+        
         # Create a unique session ID for this conversation
         session_id = str(uuid.uuid4())
         

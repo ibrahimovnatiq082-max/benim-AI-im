@@ -16,6 +16,7 @@ import { Settings, Send, Download, Monitor, Tablet, Smartphone, Code2, Loader2, 
 import { PlaterLogo, PlaterLogoText } from '@/components/PlaterLogo';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { ThinkingAnimation } from '@/components/ThinkingAnimation';
+import { AnimatedEmptyPreview, GeneratingPreview } from '@/components/AnimatedEmptyPreview';
 import { toast } from 'sonner';
 import { useAppTheme } from '@/App';
 import ReactMarkdown from 'react-markdown';
@@ -47,6 +48,13 @@ const MODELS = {
     { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro' },
     { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
     { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash' },
+  ],
+  groq: [
+    { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (Fast)' },
+    { value: 'llama-3.1-70b-versatile', label: 'Llama 3.1 70B' },
+    { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B (Ultra Fast)' },
+    { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B' },
+    { value: 'gemma2-9b-it', label: 'Gemma 2 9B' },
   ],
 };
 
@@ -129,7 +137,7 @@ const Builder = () => {
 
   const [apiKeys, setApiKeys] = useState(() => {
     const stored = localStorage.getItem('ai_builder_keys');
-    return stored ? JSON.parse(stored) : { openai: '', anthropic: '', gemini: '' };
+    return stored ? { openai: '', anthropic: '', gemini: '', groq: '', ...JSON.parse(stored) } : { openai: '', anthropic: '', gemini: '', groq: '' };
   });
 
   const [generatedCode, setGeneratedCode] = useState(loadCode);
@@ -946,6 +954,7 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
               <SelectItem value="openai">OpenAI</SelectItem>
               <SelectItem value="anthropic">Anthropic</SelectItem>
               <SelectItem value="gemini">Gemini</SelectItem>
+              <SelectItem value="groq">Groq ⚡</SelectItem>
             </SelectContent>
           </Select>
 
@@ -1033,11 +1042,14 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                   API anahtarlarınız yalnızca tarayıcınızda saklanır, asla sunucuya kaydedilmez.
                 </DialogDescription>
               </DialogHeader>
-              <div className="space-y-4 pt-4">
-                {['openai', 'anthropic', 'gemini'].map(p => (
+              <div className="space-y-4 pt-4 max-h-[60vh] overflow-y-auto">
+                {['openai', 'anthropic', 'gemini', 'groq'].map(p => (
                   <div key={p} className="space-y-2">
                     <Label className="text-sm font-medium flex items-center justify-between text-zinc-200">
-                      <span>{p.charAt(0).toUpperCase() + p.slice(1)} API Key</span>
+                      <span>
+                        {p.charAt(0).toUpperCase() + p.slice(1)} API Key
+                        {p === 'groq' && <span className="ml-2 text-xs text-yellow-400">⚡ Ultra Fast</span>}
+                      </span>
                       {apiKeys[p] && (
                         <span className="text-xs text-green-400 flex items-center gap-1">
                           <Check className="w-3 h-3" /> Kaydedildi
@@ -1047,11 +1059,21 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                     <Input
                       data-testid={`${p}-key-input`}
                       type="password"
-                      placeholder={p === 'openai' ? 'sk-...' : p === 'anthropic' ? 'sk-ant-...' : 'AI...'}
-                      value={apiKeys[p]}
+                      placeholder={
+                        p === 'openai' ? 'sk-...' : 
+                        p === 'anthropic' ? 'sk-ant-...' : 
+                        p === 'groq' ? 'gsk_...' :
+                        'AI...'
+                      }
+                      value={apiKeys[p] || ''}
                       onChange={(e) => saveApiKeys({ ...apiKeys, [p]: e.target.value })}
                       className="bg-zinc-900 border-zinc-700 focus:border-blue-500 font-mono text-xs text-zinc-100 placeholder:text-zinc-500"
                     />
+                    {p === 'groq' && (
+                      <p className="text-xs text-zinc-500">
+                        Ücretsiz key: <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">console.groq.com/keys</a>
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1160,14 +1182,10 @@ ${generatedCode.html || '<h1>Empty website</h1>'}
                       sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
                       title="Preview"
                     />
+                  ) : isLoading ? (
+                    <GeneratingPreview />
                   ) : (
-                    <div className="h-full flex items-center justify-center bg-zinc-900">
-                      <div className="text-center text-zinc-500 max-w-md p-6">
-                        <Code2 className="w-16 h-16 mx-auto mb-4 opacity-30" />
-                        <p className="text-lg font-medium text-zinc-300 mb-2">Henüz website oluşturulmadı</p>
-                        <p className="text-sm text-zinc-500">Sağ taraftaki chat'e istediğinizi yazın</p>
-                      </div>
-                    </div>
+                    <AnimatedEmptyPreview />
                   )}
                 </div>
               </TabsContent>
